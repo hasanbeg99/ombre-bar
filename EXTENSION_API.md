@@ -31,8 +31,10 @@ window.OMM = {
 - targets must be strictly increasing; last target <= ~0.95.
 - Optional per-recipe extras: `band` (tolerance multiplier, default 1), `rampMul` (stream ramp multiplier, default 1).
 - Ice is always present (visual only, does not displace volume).
-- Player holds = pours current layer, release = stop; the layer is judged after its after-flow settles,
-  then the next layer becomes active. Overflow (level > 1.0) ends the glass immediately.
+- ONE HOLD PER LAYER (v1.1): press = start pouring the current layer, release = that layer is locked.
+  Its after-flow still lands; the verdict pops when the after-flow is done (max `T.LOCK_SHOW` s) or immediately when the
+  player presses again – that press already pours the next layer. Presses shorter than `T.MIN_HOLD` are undone (accidental tap).
+  Overflow (level > 1.0) ends the glass immediately.
 
 ## done payload (passed to every onGlassDone callback)
 ```js
@@ -60,8 +62,16 @@ Pass `null` for a field to restore the default. `setHUD(null)` resets all.
 - done payload also has `timeout: bool`, `reason: 'ok'|'miss'|'overflow'|'timeout'`, `time` (s used), `timeLeft`.
 - `target` is the HEIGHT fraction of the glass interior (0 = bottom, 1 = rim) where that layer's top must end.
   Glasses have different shapes ('cup' is a bowl: fills fast at the bottom, slow at the top).
-- Player may re-hold to top up the current layer; a layer is committed after `T.COMMIT` s idle (after its after-flow settled).
+- (v1.1) No top-ups: a layer stopped short is judged as is (`reason: 'miss'` if outside the band). `actual` is the SETTLED level
+  (after-flow included), so the result never depends on when the verdict pops. `T.COMMIT`/`T.COMMIT_FAR`/`T.TINY` were removed.
 - `onGlassDone` callbacks are cleared automatically on `setMode` (register them again in `start`).
 - `OMM.pop(text, color?)` shows a floating text; `OMM.gameOver({ score, title, sub, lines })`; `OMM.state()` returns read-only engine info.
 - Game title is a config value `T.TITLE` (title is 'Ombré Bar'); do not hardcode a name.
 - Repo: hasanbeg99/ombre-bar (Pages: https://hasanbeg99.github.io/ombre-bar/). Global object name stays `window.OMM`.
+
+## v1.1 additions (interface and result object unchanged)
+- `OMM.layout()` → geometry in **CSS px**: `{ scale, GS, VW, VH, safeTop, safeBot, glassX, counterY, glassTop, glassTopMax, jugTop, topReserve }`.
+  `jugTop` = top of the jug above the tallest glass (overlays should end above it); `glassTop` = rim of the current glass.
+- `OMM.reserveTop(px)` – an overlay covering the top of the screen reserves that height (CSS px); core verdict pops
+  ('PERFEKTES GLAS!', 'ÜBERGELAUFEN!', …) are placed below it. Reset to 0 on every `setMode`.
+- Rush Hour (`bar.js`, mode id `'rush'`) ships with the core and uses both.

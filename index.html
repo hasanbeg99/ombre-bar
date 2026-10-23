@@ -1,5 +1,5 @@
 <!doctype html>
-<!-- OMM_BUILD v1.0.0 2026-10-23 -->
+<!-- OMM_BUILD v1.1.0 2026-10-23 -->
 <html lang="de">
 <head>
 <meta charset="utf-8">
@@ -9,7 +9,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Ombré Bar">
-<meta name="description" content="Schichte Iced Matcha Lattes: halten zum Gießen, am Strich loslassen. Wie sauber sind deine Schichten?">
+<meta name="description" content="Schichte Iced Matcha Lattes: halten zum Gießen, loslassen = Schicht fertig. Wie sauber sind deine Schichten?">
 <title>Ombré Bar</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
@@ -23,7 +23,8 @@ canvas{position:fixed;left:0;top:0;width:100vw;height:100vh;height:100dvh;displa
 <body>
 <canvas id="c" aria-label="Ombré Bar Spiel"></canvas>
 <div id="safe"></div>
-<script src="game.js?v=1.0.0"></script>
+<script src="game.js?v=1.1.0"></script>
+<script src="bar.js?v=1.1.0"></script>
 <script>
 if ('serviceWorker' in navigator && location.protocol === 'https:') {
   addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));

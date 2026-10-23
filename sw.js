@@ -1,6 +1,6 @@
-// OMM_BUILD v1.0.0 – network-first, versioned cache, offline fallback.
-const CACHE = 'ombre-bar-v1.0.0';
-const ASSETS = ['./', './index.html', './game.js?v=1.0.0', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-180.png'];
+// OMM_BUILD v1.1.0 – network-first, versioned cache, offline fallback.
+const CACHE = 'ombre-bar-v1.1.0';
+const ASSETS = ['./', './index.html', './game.js?v=1.1.0', './bar.js?v=1.1.0', './manifest.json', './icons/icon-192.png', './icons/icon-512.png', './icons/icon-180.png'];
 self.addEventListener('install', e => { e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).catch(() => {})); self.skipWaiting(); });
 self.addEventListener('activate', e => e.waitUntil(
   caches.keys().then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())));

@@ -1,26 +1,27 @@
 /* Ombré Bar – Schichten. Gießen. Genießen.  (c) 2026 Oruci Sabahudin. Original code & procedural art/audio. */
 'use strict';
 (() => {
-const BUILD = 'OMM_BUILD v1.0.0 2026-10-23';
+const BUILD = 'OMM_BUILD v1.1.0 2026-10-23';
 
 // ───────────────────────── TUNING (all gameplay numbers live here) ─────────────────────────
 const T = {
   TITLE: 'Ombré Bar', SUBTITLE: 'SCHICHTEN · GIESSEN · GENIESSEN', MARK: 'O.T.', CREDIT: 'inspiriert von O.T.',
   W: 400, MIN_H: 700,               // logical design size (portrait)
   // stream: volume (fraction of a full glass) per second
-  F0: 0.07,                         // stream at the start of every hold
-  F1_0: 0.50, F1_1: 0.74,           // max stream at difficulty 0 → 1
-  RAMP_T0: 1.7, RAMP_T1: 1.05,      // s of continuous holding until max stream (difficulty 0 → 1)
-  RAMP_POW: 1.6,                    // ramp curve (>1 = gentle start, then rushes)
-  MIX0: 0.17, MIX_K: 3.0,           // stream above MIX0 churns the boundary below (mix += excess*K*dt)
+  // ONE HOLD PER LAYER: press = start pouring the next layer, release = that layer is locked (after-flow still lands)
+  F0: 0.055,                        // stream at the start of every hold (gentle → beginners can aim)
+  F1_0: 0.42, F1_1: 0.62,           // max stream at difficulty 0 → 1
+  RAMP_T0: 2.1, RAMP_T1: 1.4,       // s of continuous holding until max stream (difficulty 0 → 1)
+  RAMP_POW: 1.7,                    // ramp curve (>1 = gentle start, then rushes)
+  MIX0: 0.24, MIX_K: 2.4,           // stream above MIX0 churns the boundary below (mix += excess*K*dt)
+  MIN_HOLD: 0.07,                   // s – a shorter press is treated as an accidental tap and undone
+  LOCK_SHOW: 0.55,                  // s max after release until the verdict pops (judging uses the settled level anyway)
   // judging (height fraction of the glass)
-  BAND0: 0.055, BAND1: 0.03,        // miss tolerance around a target line
-  PERF0: 0.016, PERF1: 0.009,       // PERFEKT tolerance
+  BAND0: 0.065, BAND1: 0.038,       // miss tolerance around a target line
+  PERF0: 0.018, PERF1: 0.011,       // PERFEKT tolerance
   KNAPP: 0.72,                      // |error| beyond this share of the band (but still inside) = KNAPP!
   SHARP_OK: 0.85,                   // sharpness ≥ this = SAUBER!
   PERFECT_SHARP: 0.6,               // a PERFEKT glass also needs every boundary at least this crisp
-  COMMIT: 0.5, COMMIT_FAR: 1.15,    // idle s after after-flow until a layer is locked (FAR = still clearly below line)
-  TINY: 0.004,                      // a layer with less volume is not committed (accidental tap)
   // run
   LIVES: 3, RAMP_GLASSES: 26, MULT_MAX: 5,
   TIME0: 10, TIME1: 6, TIME_LAYER0: 3.4, TIME_LAYER1: 2.3, // ice-melt timer per glass = base + per layer
@@ -28,7 +29,10 @@ const T = {
   SLIDE_IN: 0.5, SLIDE_OUT: 0.36, JUDGE_DELAY: 0.6, FAIL_DELAY: 0.85,
   RESTART_LOCK: 0.45,
   // surface spring waves
-  WAVE_N: 26, WAVE_K: 140, WAVE_DAMP: 4.0, WAVE_SPREAD: 60,
+  WAVE_N: 48, WAVE_K: 26, WAVE_C: 5200, WAVE_DAMP: 2.6, // surface spring-mass columns (restore, neighbour coupling, damping)
+  IMPACT: 1500,                     // downward push of the stream on the surface (× rate)
+  SLOSH_K: 46, SLOSH_DAMP: 2.2, SLOSH_GAIN: 0.17, // whole-surface tilt mode driven by glass acceleration
+  BOUND_WOB: 1.6,                   // px soft undulation of layer boundaries
   MAXP: 300,                        // particle cap
   // ingredients: flow = stream multiplier, tail = after-flow (s of current stream) arriving over tailT,
   // rise = share of the poured volume that expands afterwards over riseT (foam), cloud = sinking cloud fx
@@ -73,6 +77,7 @@ const SPR = {
   bubble: sprite(32, (x, s) => { x.strokeStyle = 'rgba(255,255,255,0.85)'; x.lineWidth = 2; x.beginPath(); x.arc(16, 16, 12, 0, 7); x.stroke(); x.fillStyle = 'rgba(255,255,255,0.25)'; x.fill(); x.fillStyle = 'rgba(255,255,255,0.95)'; x.beginPath(); x.arc(11, 11, 3.2, 0, 7); x.fill(); }),
   foamB: sprite(32, (x, s) => { x.strokeStyle = 'rgba(200,190,170,0.5)'; x.lineWidth = 1.5; x.beginPath(); x.arc(16, 16, 11, 0, 7); x.stroke(); x.fillStyle = 'rgba(255,255,255,0.7)'; x.beginPath(); x.arc(12, 12, 2.5, 0, 7); x.fill(); }),
   spark: sprite(48, (x, s) => { const g = x.createRadialGradient(24, 24, 0, 24, 24, 24); g.addColorStop(0, 'rgba(255,246,200,1)'); g.addColorStop(0.3, 'rgba(255,220,130,0.5)'); g.addColorStop(1, 'rgba(255,220,130,0)'); x.fillStyle = g; x.fillRect(0, 0, s, s); x.fillStyle = '#fff8dc'; x.beginPath(); x.moveTo(24, 6); x.lineTo(27, 21); x.lineTo(42, 24); x.lineTo(27, 27); x.lineTo(24, 42); x.lineTo(21, 27); x.lineTo(6, 24); x.lineTo(21, 21); x.closePath(); x.fill(); }),
+  stripe: (() => { const c = sprite(32, () => {}); c.height = 128; const x = c.getContext('2d'); const g = x.createLinearGradient(0, 0, 32, 0); g.addColorStop(0, 'rgba(255,255,255,0)'); g.addColorStop(0.5, 'rgba(255,255,255,0.5)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 32, 128); x.globalCompositeOperation = 'destination-in'; const v = x.createLinearGradient(0, 0, 0, 128); v.addColorStop(0, 'rgba(0,0,0,1)'); v.addColorStop(1, 'rgba(0,0,0,0.15)'); x.fillStyle = v; x.fillRect(0, 0, 32, 128); return c; })(),
   leaf: sprite(32, (x, s) => { x.translate(16, 16); x.rotate(-0.6); x.fillStyle = '#7ea04d'; x.beginPath(); x.ellipse(0, 0, 13, 6.5, 0, 0, 7); x.fill(); x.strokeStyle = '#5c7d36'; x.lineWidth = 1.4; x.beginPath(); x.moveTo(-11, 0); x.lineTo(11, 0); x.stroke(); }),
 };
 
@@ -188,7 +193,7 @@ let hapticOK = false;
 const vib = p => { if (hapticOK && navigator.vibrate) { try { navigator.vibrate(p); } catch (e) {} } };
 
 // ───────────────────────── particles & pops ─────────────────────────
-// kinds: 0 droplet (outside), 1 bubble (inside liquid), 2 matcha cloud (inside), 3 spark (outside), 4 leaf (outside)
+// kinds: 0 droplet (outside), 1 bubble (inside liquid), 2 matcha cloud (inside), 3 spark (outside), 4 leaf (outside), 5 ripple ring (inside)
 const parts = []; for (let i = 0; i < T.MAXP; i++) parts.push({ a: 0, x: 0, y: 0, vx: 0, vy: 0, l: 0, m: 1, s: 1, c: '#fff', k: 0, g: 0, r: 0, vr: 0 });
 let pI = 0, pAlive = 0;
 function emit(k, x, y, vx, vy, s, life, c, g) {
@@ -200,10 +205,10 @@ const pops = []; for (let i = 0; i < 10; i++) pops.push({ a: 0, x: 0, y: 0, t: 0
 let ppI = 0; function pop(x, y, txt, c, s = 1) { const hwT = txt.length * 9.5 * s; x = clamp(x, hwT + 6, VW - hwT - 6); const o = pops[ppI]; ppI = (ppI + 1) % pops.length; o.a = 1; o.x = x; o.y = y; o.t = 0; o.txt = txt; o.c = c; o.s = s; }
 
 // ───────────────────────── engine state ─────────────────────────
-const G = { state: 'menu', t: 0, shake: 0, flash: 0, over: null, overT: 0, hud: {}, hold: false, toast: '', toastT: 0, seen: {}, menuT: 0 };
+const G = { topReserve: 0, state: 'menu', t: 0, shake: 0, flash: 0, over: null, overT: 0, hud: {}, hold: false, toast: '', toastT: 0, seen: {}, menuT: 0 };
 const E = {
   rec: null, glass: null, phase: 'none', t: 0, gx: 0, pgx: 0, layers: [], ci: 0, band: 0.05, perf: 0.012, rampT: 1.5, f1: 0.5,
-  pouring: false, holdT: 0, holdVol: 0, rate: 0, prate: 0, idle: 0, needRelease: false, timeMax: 0, timeLeft: 0,
+  pouring: false, holdT: 0, holdVol: 0, holdMix: 0, lockT: 0, rate: 0, prate: 0, idle: 0, needRelease: false, sl: 0, psl: 0, slv: 0, gvel: 0, ringAcc: 0, streamTopY: 0, timeMax: 0, timeLeft: 0,
   done: null, judgeT: 0, emitted: false, queue: null, ice: [], wave: new Float32Array(T.WAVE_N), wv: new Float32Array(T.WAVE_N),
   streamTop: 0, streamW: 0, jugA: 0, glugAcc: 0, foam: [], bot: false, botAim: 0, hintsOn: false, mixHint: false, spillT: 0, failFx: 0,
 };
@@ -214,13 +219,13 @@ function initGlass(rec) {
   const g = T.GLASS[rec.glass] || T.GLASS.tall;
   const d = clamp(rec.diff !== undefined ? rec.diff : (typeof rec.difficulty === 'number' ? rec.difficulty : 0.3), 0, 1);
   E.rec = rec; E.glass = g; E.phase = 'in'; E.t = 0; E.gx = VW + 140; E.pgx = E.gx; E.ci = 0; E.pouring = false; E.rate = 0; E.prate = 0; E.idle = 0;
-  E.layers = rec.layers.map(l => ({ type: T.ING[l.type] ? l.type : 'milk', target: clamp(+l.target || 0.5, 0.05, 0.98), vol: 0, pv: 0, tailP: 0, tailR: 0, riseP: 0, riseR: 0, mix: 0, res: null }));
+  E.layers = rec.layers.map(l => ({ type: T.ING[l.type] ? l.type : 'milk', target: clamp(+l.target || 0.5, 0.05, 0.98), vol: 0, pv: 0, locked: false, tailP: 0, tailR: 0, riseP: 0, riseR: 0, mix: 0, res: null }));
   const bm = rec.band || 1;
   E.band = lerp(T.BAND0, T.BAND1, d) * bm; E.perf = lerp(T.PERF0, T.PERF1, d) * Math.sqrt(bm);
   E.rampT = lerp(T.RAMP_T0, T.RAMP_T1, d) / (rec.rampMul || 1); E.f1 = lerp(T.F1_0, T.F1_1, d);
   E.timeMax = rec.time > 0 ? rec.time : 0; E.timeLeft = E.timeMax; E.done = null; E.emitted = false; E.judgeT = 0;
   E.needRelease = G.hold; E.bot = !!rec.bot; E.hintsOn = !!rec.hints; E.spillT = 0; E.failFx = 0;
-  E.wave.fill(0); E.wv.fill(0); E.streamW = 0; E.jugA = 0;
+  E.wave.fill(0); E.wv.fill(0); E.streamW = 0; E.jugA = 0; E.sl = E.psl = E.slv = 0; E.gvel = 0; E.lockT = 0; E.holdMix = 0;
   const R = mulberry((Math.random() * 1e9) | 0), n = rec.glass === 'short' ? 3 : 4; E.ice = [];
   const hw0 = g.hw(0.1) * GS;
   for (let i = 0; i < n; i++) E.ice.push({ x: rnd(-hw0 * 0.45, hw0 * 0.45), s: (rec.glass === 'cup' ? 30 : 36) * GS * (0.85 + R() * 0.3), rest: 0, r: rnd(-0.4, 0.4), ph: R() * 6.28 });
@@ -240,23 +245,26 @@ const gH = () => E.glass.H * GS;
 const yOf = h => GY - h * gH();
 function surfH() { return volToH(E.glass, totalVol()); }
 
-function judgeLayer(i) {
-  const L = E.layers[i], actual = volToH(E.glass, cumVol(i)), err = actual - L.target, ae = Math.abs(err);
+function settledCum(i) { let s = 0; for (let k = 0; k <= i; k++) { const L = E.layers[k]; s += L.vol + L.tailP + L.riseP; } return s; }
+function judgeLayer(i) { // judged on the SETTLED level (after-flow included) → result never depends on when the verdict pops
+  const L = E.layers[i], actual = volToH(E.glass, settledCum(i)), err = actual - L.target, ae = Math.abs(err);
   const sharp = i === 0 ? 1 : clamp(1 - L.mix, 0, 1);
   L.res = { type: L.type, target: L.target, actual: +actual.toFixed(4), error: +err.toFixed(4), sharpness: +sharp.toFixed(3), perfect: ae <= E.perf, miss: ae > E.band, knapp: ae > E.band * T.KNAPP && ae <= E.band };
   return L.res;
 }
 function layerPoints(r) { return T.PTS + (r.perfect ? T.PERFECT_PTS : 0) + (r.knapp ? T.KNAPP_PTS : 0) + Math.round(r.sharpness * T.SHARP_PTS); }
 function commitLayer() {
-  const i = E.ci, r = judgeLayer(i), y = yOf(r.actual), x = E.gx + E.glass.hw(r.actual) * GS + 34;
+  const i = E.ci;
+  if (volToH(E.glass, settledCum(E.layers.length - 1)) >= 1) { E.spillT = 1; spillFx(); finishGlass('overflow'); return; }
+  const r = judgeLayer(i), y = yOf(Math.min(r.actual, 1)), x = E.gx + E.glass.hw(Math.min(r.actual, 1)) * GS + 34;
   E.idle = 0; sfx.tick();
   if (r.miss) { pop(E.gx, y - 20, r.error > 0 ? 'ZU VIEL!' : 'ZU WENIG!', '#d4607a', 1.15); finishGlass('miss'); return; }
   if (r.perfect) { pop(E.gx, y - 24, 'PERFEKT!', '#c99a2e', 1.2); sfx.perfect(i); vib(12); for (let k = 0; k < 10; k++) emit(3, E.gx + rnd(-60, 60), y + rnd(-8, 8), rnd(-60, 60), rnd(-90, -20), rnd(10, 18), rnd(0.5, 0.9)); }
   else if (r.knapp) { pop(E.gx, y - 24, 'KNAPP!', '#d08a3a', 1.05); sfx.knapp(); vib(8); }
   else { pop(E.gx, y - 24, 'GUT', '#6f8f46', 0.95); sfx.good(); }
   if (i > 0) { if (r.sharpness >= T.SHARP_OK) pop(x, y + 14, 'SAUBER!', '#5f843b', 0.75); else if (r.sharpness < 0.5) pop(x, y + 14, 'TRÜB', '#9a8a5a', 0.7); }
-  E.ci++; E.pouring = false; E.holdT = 0;
-  if (E.ci >= E.layers.length) finishGlass('ok'); else if (G.hold) E.needRelease = true;
+  E.ci++; E.pouring = false; E.holdT = 0; E.slv -= 14;
+  if (E.ci >= E.layers.length) finishGlass('ok'); // no needRelease: the press that triggered the verdict pours the next layer
 }
 function finishGlass(reason) {
   if (E.done) return;
@@ -267,93 +275,105 @@ function finishGlass(reason) {
   E.done = { recipeId: E.rec.id, score, perfect, overflow: reason === 'overflow', failed, timeout: reason === 'timeout', reason,
     time: +(E.timeMax ? E.timeMax - E.timeLeft : E.t).toFixed(2), timeLeft: +E.timeLeft.toFixed(2),
     layers: rs.map(r => ({ type: r.type, target: r.target, actual: r.actual, error: r.error, sharpness: r.sharpness })) };
-  E.phase = 'judge'; E.judgeT = 0; E.pouring = false; setPour(0, 0);
+  E.phase = 'judge'; E.judgeT = 0; E.pouring = false; setPour(0, 0); E.slv += failed ? 70 : 38; // glass is nudged/served → liquid sloshes and settles
   if (G.hold) E.needRelease = true;
-  if (perfect) { sfx.glass(); vib([10, 40, 14]); G.flash = 0.5; pop(E.gx, yOf(1) - 92, 'PERFEKTES GLAS!', '#c99a2e', 1.15);
+  if (perfect) { sfx.glass(); vib([10, 40, 14]); G.flash = 0.5; pop(E.gx, Math.max(yOf(1) - 92, G.topReserve + 46), 'PERFEKTES GLAS!', '#c99a2e', 1.15);
     for (let k = 0; k < 22; k++) emit(k % 3 ? 3 : 4, E.gx + rnd(-50, 50), yOf(0.9), rnd(-160, 160), rnd(-260, -80), rnd(12, 20), rnd(0.8, 1.3), '', 260); }
   if (failed) { E.failFx = 1; G.shake = reason === 'overflow' ? 7 : 4; vib(30);
-    if (reason === 'overflow') { sfx.spill(); pop(E.gx, yOf(1) - 40, 'ÜBERGELAUFEN!', '#d4607a', 1.2); }
-    else if (reason === 'timeout') { sfx.miss(); pop(E.gx, yOf(1) - 40, 'ZU LANGSAM!', '#d4607a', 1.15); }
+    const fy = Math.max(yOf(1) - 40, G.topReserve + 46);
+    if (reason === 'overflow') { sfx.spill(); pop(E.gx, fy, 'ÜBERGELAUFEN!', '#d4607a', 1.2); }
+    else if (reason === 'timeout') { sfx.miss(); pop(E.gx, fy, 'ZU LANGSAM!', '#d4607a', 1.15); }
     else sfx.miss(); }
 }
-
+function deliver(dt) {
+  let pend = 0;
+  for (const Lk of E.layers) {
+    if (Lk.tailP > 0) { const d = Math.min(Lk.tailP, Lk.tailP * Lk.tailR * dt * 2.2 + 0.0004 * dt); Lk.vol += d; Lk.tailP -= d; }
+    if (Lk.riseP > 0) { const d = Math.min(Lk.riseP, Lk.riseP * Lk.riseR * dt * 2.2 + 0.0004 * dt); Lk.vol += d; Lk.riseP -= d; if (Math.random() < 0.25) sfx.fizz(); }
+    if (Lk.tailP < 1e-5) { Lk.vol += Lk.tailP; Lk.tailP = 0; } if (Lk.riseP < 1e-5) { Lk.vol += Lk.riseP; Lk.riseP = 0; }
+    pend += Lk.tailP + Lk.riseP;
+  }
+  return pend;
+}
 function pourStep(dt) {
-  const L = curLayer(), ing = T.ING[L.type];
   const wantHold = E.bot ? botWants() : (G.hold && !E.needRelease);
-  if (wantHold) {
-    if (!E.pouring) { E.pouring = true; E.holdT = 0; E.holdVol = 0; E.streamTop = 0; }
+  let L = curLayer();
+  // released layer: verdict after the after-flow (or at the latest LOCK_SHOW); a new press locks it in immediately
+  if (L.locked) { E.lockT += dt; if (wantHold || E.lockT >= T.LOCK_SHOW || L.tailP + L.riseP < 0.0006) { commitLayer(); if (E.phase !== 'pour') return; L = curLayer(); } }
+  const ing = T.ING[L.type];
+  if (wantHold && !L.locked) {
+    if (!E.pouring) { E.pouring = true; E.holdT = 0; E.holdVol = 0; E.holdMix = 0; E.streamTop = 0; }
     E.holdT += dt;
     const f = Math.pow(clamp(E.holdT / E.rampT, 0, 1), T.RAMP_POW);
     E.rate = ing.flow * (T.F0 + (E.f1 - T.F0) * f);
     const dv = E.rate * dt; L.vol += dv; E.holdVol += dv; E.idle = 0;
-    if (E.ci > 0 && E.rate > T.MIX0) { L.mix += (E.rate - T.MIX0) * T.MIX_K * dt; if (E.hintsOn && !G.seen.mix && L.mix > 0.25) { G.seen.mix = 1; E.mixHint = 2.5; } }
-  } else {
-    if (E.pouring) { // release → after-flow
-      E.pouring = false;
+    if (E.ci > 0 && E.rate > T.MIX0) { const dm = (E.rate - T.MIX0) * T.MIX_K * dt; L.mix += dm; E.holdMix += dm; if (E.hintsOn && !G.seen.mix && L.mix > 0.3) { G.seen.mix = 1; E.mixHint = 2.5; } }
+  } else if (E.pouring) { // release → layer locked, after-flow keeps landing
+    E.pouring = false;
+    if (E.holdT < T.MIN_HOLD) { L.vol -= E.holdVol; L.mix -= E.holdMix; if (L.vol < 0) L.vol = 0; } // accidental tap → undone
+    else {
+      L.locked = true; E.lockT = 0;
       L.tailP += E.rate * ing.tail; L.tailR = 1 / ing.tailT;
       L.riseP += E.holdVol * ing.rise; L.riseR = 1 / ing.riseT;
       if (ing.cloud && E.ci > 0) L.mix += E.rate * 0.12;
     }
     E.rate = 0;
-  }
-  // after-flow delivery (exponential)
-  let pend = 0;
-  for (const Lk of E.layers) {
-    if (Lk.tailP > 0) { const d = Math.min(Lk.tailP, Lk.tailP * Lk.tailR * dt * 2.2 + 0.0004 * dt); Lk.vol += d; Lk.tailP -= d; }
-    if (Lk.riseP > 0) { const d = Math.min(Lk.riseP, Lk.riseP * Lk.riseR * dt * 2.2 + 0.0004 * dt); Lk.vol += d; Lk.riseP -= d; if (Math.random() < 0.25) sfx.fizz(); }
-    if (Lk.tailP < 1e-5) Lk.tailP = 0; if (Lk.riseP < 1e-5) Lk.riseP = 0;
-    pend += Lk.tailP + Lk.riseP;
-  }
-  const h = surfH();
-  if (h >= 1.0) { E.spillT = 1; spillFx(); finishGlass('overflow'); return; }
-  if (!E.pouring && pend < 0.0006 && L.vol > T.TINY) {
-    E.idle += dt;
-    const far = volToH(E.glass, cumVol(E.ci)) < L.target - E.band;
-    if (E.idle >= (far ? T.COMMIT_FAR : T.COMMIT)) commitLayer();
-  }
+  } else { E.rate = 0; E.idle += dt; }
+  deliver(dt);
+  if (surfH() >= 1.0) { E.spillT = 1; spillFx(); finishGlass('overflow'); return; }
   if (E.timeMax && E.phase === 'pour') { E.timeLeft -= dt; if (E.timeLeft <= 0) { E.timeLeft = 0; finishGlass('timeout'); } }
 }
-function botWants() { // menu demo autopilot
+function botWants() { // menu demo autopilot (also used by tests/balancing): one hold per layer
   const L = curLayer(); if (!L) return false; const ing = T.ING[L.type];
-  if (E.pouring) { const pred = cumVol(E.ci) + E.rate * ing.tail + E.holdVol * ing.rise; return volToH(E.glass, pred) < L.target + E.botAim; }
-  return L.vol <= T.TINY && E.idle === 0 && E.t > 0.5;
+  if (E.pouring) { const pred = settledCum(E.ci) + E.rate * ing.tail + E.holdVol * ing.rise; return volToH(E.glass, pred) < L.target + E.botAim; }
+  if (L.locked) return false;
+  return E.idle > (E.ci === 0 ? 0.45 : 0.3);
 }
 function spillFx() { const y = yOf(1) - 2; for (const s of [-1, 1]) for (let k = 0; k < 14; k++) emit(0, E.gx + s * E.glass.hw(1) * GS, y, s * rnd(20, 90), rnd(-120, 10), rnd(2, 4.5), rnd(0.6, 1), T.ING[(curLayer() || E.layers[E.layers.length - 1]).type].dark, 700); }
 
 function stepEngine(dt) {
-  E.pgx = E.gx; for (const l of E.layers) l.pv = l.vol + 0;
+  E.pgx = E.gx; E.psl = E.sl; for (const l of E.layers) l.pv = l.vol + 0;
   if (E.phase === 'none' || E.phase === 'gone') return;
   E.t += dt;
-  if (E.phase === 'in') { const f = clamp(E.t / T.SLIDE_IN, 0, 1), e = 1 - Math.pow(1 - f, 3) * (1 - f * 0.0); E.gx = lerp(VW + 140, CX, e + Math.sin(f * Math.PI) * 0.0); if (f >= 1) { E.gx = CX; E.phase = 'pour'; E.t = 0; E.botAim = rnd(-0.006, 0.006); } }
+  if (E.phase === 'in') { const f = clamp(E.t / T.SLIDE_IN, 0, 1), e = 1 - (1 - f) * (1 - f); E.gx = lerp(VW + 140, CX, e); if (f >= 1) { E.gx = CX; E.phase = 'pour'; E.t = 0; E.idle = 0; E.botAim = rnd(-0.006, 0.006); } }
   else if (E.phase === 'pour') pourStep(dt);
-  else if (E.phase === 'judge') { E.judgeT += dt; E.timeLeft = E.timeLeft; if (!E.emitted && E.judgeT >= (E.done.failed ? T.FAIL_DELAY : T.JUDGE_DELAY)) { E.emitted = true; const d = E.done; for (const cb of Array.from(cbs)) { try { cb(d); } catch (e) { console.error(e); } } } deliverOnly(dt); }
+  else if (E.phase === 'judge') { E.judgeT += dt; if (!E.emitted && E.judgeT >= (E.done.failed ? T.FAIL_DELAY : T.JUDGE_DELAY)) { E.emitted = true; const d = E.done; for (const cb of Array.from(cbs)) { try { cb(d); } catch (e) { console.error(e); } } } deliver(dt); }
   else if (E.phase === 'out') { const f = clamp(E.t / T.SLIDE_OUT, 0, 1); E.gx = lerp(CX, -160, f * f); if (f >= 1) { E.phase = 'gone'; if (E.queue) { const q = E.queue; E.queue = null; initGlass(q); sfx.clink(0.8, 0.05); sfx.clink(0.6, 0.2); } } }
   if (E.phase !== 'pour' && E.phase !== 'judge') E.rate = 0;
   // stream visuals
-  const tw = E.rate > 0 ? 3 + E.rate * 16 : 0; E.streamW += (tw - E.streamW) * Math.min(1, dt * 18);
-  if (!E.pouring) E.streamTop += dt * 900; E.jugA += ((E.pouring ? 1 : 0) - E.jugA) * Math.min(1, dt * 9);
+  const tw = E.rate > 0 ? 4.2 + E.rate * 23 : 0; E.streamW += (tw - E.streamW) * Math.min(1, dt * 18);
+  if (!E.pouring) E.streamTop += dt * 900; if (E.glass) E.streamTopY = jugGeo(E.gx).sy + (E.pouring ? 0 : E.streamTop); E.jugA += ((E.pouring ? 1 : 0) - E.jugA) * Math.min(1, dt * 9);
+  // slosh: whole-surface tilt mode, driven by the glass' horizontal acceleration (slide in → stop → settle)
+  const vel = (E.gx - E.pgx) / dt, acc = (vel - E.gvel) / dt; E.gvel = vel;
+  E.slv += (-T.SLOSH_K * E.sl - T.SLOSH_DAMP * E.slv + clamp(acc, -9000, 9000) * T.SLOSH_GAIN) * dt; E.sl = clamp(E.sl + E.slv * dt, -16, 16);
   if (E.layers.length && (E.phase === 'pour' || E.phase === 'judge')) liquidFx(dt);
-  // waves
-  const N = T.WAVE_N, w = E.wave, v = E.wv;
-  for (let i = 0; i < N; i++) { const l = i > 0 ? w[i - 1] : w[i], r = i < N - 1 ? w[i + 1] : w[i]; v[i] += (-T.WAVE_K * w[i] + T.WAVE_SPREAD * (l + r - 2 * w[i]) * 6 - T.WAVE_DAMP * v[i]) * dt; }
-  for (let i = 0; i < N; i++) w[i] += v[i] * dt;
+  // surface waves: spring-mass columns (restore + neighbour coupling + damping), reflective walls
+  const N = T.WAVE_N, w = E.wave, v = E.wv, kick = (E.sl - E.psl) * 0.9;
+  for (let i = 0; i < N; i++) { const l = i > 0 ? w[i - 1] : w[i], r = i < N - 1 ? w[i + 1] : w[i]; v[i] += (-T.WAVE_K * w[i] + T.WAVE_C * (l + r - 2 * w[i]) / 64 - T.WAVE_DAMP * v[i]) * dt; }
+  if (kick) { v[0] -= kick * 30; v[N - 1] += kick * 30; }
+  for (let i = 0; i < N; i++) w[i] = clamp(w[i] + v[i] * dt, -14, 14);
   E.failFx = Math.max(0, E.failFx - dt);
 }
-function deliverOnly(dt) { for (const Lk of E.layers) { if (Lk.tailP > 0) { const d = Math.min(Lk.tailP, Lk.tailP * Lk.tailR * dt * 2.2 + 0.0004 * dt); Lk.vol += d; Lk.tailP -= d; } if (Lk.riseP > 0) { const d = Math.min(Lk.riseP, Lk.riseP * Lk.riseR * dt * 2.2 + 0.0004 * dt); Lk.vol += d; Lk.riseP -= d; } } }
 function liquidFx(dt) {
-  const L = curLayer(), h = surfH(), sy = yOf(Math.min(h, 1)), sx = E.gx + 12 * GS, ing = T.ING[(L || E.layers[E.layers.length - 1]).type];
-  if (E.rate > 0 && E.phase === 'pour') {
-    const N = T.WAVE_N, hw = E.glass.hw(Math.min(h, 1)) * GS, idx = clamp(Math.round((sx - (E.gx - hw)) / (2 * hw) * (N - 1)), 0, N - 1);
-    E.wv[idx] += E.rate * 260 * dt * 8 * (Math.random() - 0.3); if (idx > 0) E.wv[idx - 1] -= E.rate * 400 * dt; if (idx < N - 1) E.wv[idx + 1] -= E.rate * 400 * dt;
-    if (Math.random() < E.rate * 6 * dt * 60 * 0.12) emit(0, sx + rnd(-3, 3), sy - 2, rnd(-50, 50), rnd(-120, -40), rnd(1.5, 3), rnd(0.25, 0.45), ing.col === '#fbf7ee' || ing.col === '#fffdf7' ? '#e9e1cf' : ing.dark, 700);
-    if (Math.random() < E.rate * 4 * dt * 60 * 0.12) emit(1, sx + rnd(-8, 8), sy + rnd(6, 26), rnd(-8, 8), rnd(-40, -15), rnd(4, 8), rnd(0.4, 0.9), '', 0);
-    E.glugAcc += dt * (4 + E.rate * 18); if (E.glugAcc > 1) { E.glugAcc = 0; sfx.glug(h); }
+  const L = curLayer(), h = surfH(), sy = yOf(Math.min(h, 1)), sx = E.gx + 10 * GS, ing = T.ING[(L || E.layers[E.layers.length - 1]).type];
+  const hw = E.glass.hw(Math.min(h, 1)) * GS, N = T.WAVE_N;
+  // the stream keeps hitting the surface until its detached tail has fallen
+  const hitting = E.streamW > 0.6 && (E.pouring || E.streamTopY < sy);
+  if (hitting && (E.phase === 'pour' || E.phase === 'judge')) {
+    const sw = E.streamW / 22, idx = clamp(Math.round((sx - (E.gx - hw)) / (2 * hw) * (N - 1)), 1, N - 2);
+    E.wv[idx] += T.IMPACT * sw * dt * (0.7 + Math.random() * 0.6); E.wv[idx - 1] += T.IMPACT * sw * 0.45 * dt; E.wv[idx + 1] += T.IMPACT * sw * 0.45 * dt;
+    if (idx > 2) E.wv[idx - 3] -= T.IMPACT * sw * 0.25 * dt; if (idx < N - 3) E.wv[idx + 3] -= T.IMPACT * sw * 0.25 * dt;
+    const dc = ing.col === '#fbf7ee' || ing.col === '#fffdf7' || ing.col === '#efe7d6' ? '#e3dac4' : ing.col;
+    if (Math.random() < sw * 1.4) emit(0, sx + rnd(-3, 3), sy - 2, rnd(-80, 80), rnd(-190, -50), rnd(1.6, 3.3), rnd(0.25, 0.5), dc, 760);
+    E.ringAcc += dt * (5 + sw * 9); if (E.ringAcc > 1) { E.ringAcc = 0; emit(5, sx + rnd(-2, 2), sy + 1, 0, 0, 3 + sw * 4, rnd(0.45, 0.7), '', 0); }
+    if (Math.random() < sw * 0.5) emit(1, sx + rnd(-8, 8), sy + rnd(6, 26), rnd(-8, 8), rnd(-40, -15), rnd(3, 7), rnd(0.4, 0.9), '', 0);
   }
-  // matcha clouds sinking into the layer below
+  if (E.rate > 0 && E.phase === 'pour') { E.glugAcc += dt * (4 + E.rate * 18); if (E.glugAcc > 1) { E.glugAcc = 0; sfx.glug(h); } }
+  // matcha clouds curling down into the layer below
   if (L && ing.cloud && E.ci > 0 && (E.rate > 0 || L.tailP > 0.002)) {
-    const by = yOf(volToH(E.glass, cumVol(E.ci - 1))), hw = E.glass.hw(volToH(E.glass, cumVol(E.ci - 1))) * GS;
-    const amt = (E.rate + L.tailP * 3) * 50 * dt;
-    if (Math.random() < amt) emit(2, E.gx + rnd(-hw * 0.7, hw * 0.7), by + rnd(-4, 4), rnd(-10, 10), rnd(8, 26) * (0.6 + E.rate), rnd(12, 22) * GS, rnd(1.4, 2.4), '', -6);
+    const bh = volToH(E.glass, cumVol(E.ci - 1)), by = yOf(bh), bw = E.glass.hw(bh) * GS;
+    const amt = (E.rate + L.tailP * 3) * 62 * dt;
+    if (Math.random() < amt) emit(2, sx + rnd(-bw * 0.5, bw * 0.35), by + rnd(-3, 5), rnd(-14, 14), rnd(10, 24) * (0.6 + E.rate), rnd(11, 19) * GS, rnd(1.8, 2.8), '', rnd(0, 6.28));
   }
   if (L && L.riseP > 0.001 && Math.random() < 0.4) emit(1, E.gx + rnd(-40, 40), sy + rnd(2, 10), rnd(-5, 5), rnd(-20, -5), rnd(3, 6), 0.4, '', 0);
 }
@@ -371,12 +391,18 @@ const API = {
   gameOver,
   pop(txt, c) { pop(CX, VH * 0.42, txt, c || '#5f843b', 1); },
   random: seed => seed === undefined ? Math.random : mulberry(seed | 0),
+  // geometry for overlays (CSS px): counter line, current glass rim, jug top above the tallest glass, glass centre, scale
+  layout() { let maxH = 0; for (const k in T.GLASS) maxH = Math.max(maxH, T.GLASS[k].H); const gH0 = E.glass ? E.glass.H : maxH;
+    return { scale, GS, VW, VH, safeTop: safeTop * scale, safeBot: safeBot * scale, glassX: CX * scale, counterY: GY * scale,
+      glassTop: (GY - gH0 * GS) * scale, glassTopMax: (GY - maxH * GS) * scale, jugTop: (GY - maxH * GS - 92 * GS) * scale, topReserve: G.topReserve * scale }; },
+  // overlays covering the top of the screen reserve it (CSS px) → core pops/verdicts stay below
+  reserveTop(px) { G.topReserve = Math.max(0, +px || 0) / scale; },
   state: () => ({ phase: E.phase, layer: E.ci, level: E.layers.length ? surfH() : 0, pouring: E.pouring, rate: E.rate, timeLeft: E.timeLeft, gameState: G.state }),
 };
 function setMode(id) {
   const cur = modes[API.mode]; if (cur && cur.stop) { try { cur.stop(); } catch (e) { console.error(e); } }
   for (const cb of modeCbs) cbs.delete(cb); modeCbs = [];
-  G.hud = {}; G.over = null; E.queue = null; API.mode = id; E.needRelease = G.hold;
+  G.hud = {}; G.over = null; E.queue = null; G.topReserve = 0; API.mode = id; E.needRelease = G.hold;
   if (id === 'menu') { G.state = 'menu'; G.menuT = 0; startDemo(); return; }
   G.state = 'play'; E.phase = 'none';
   const m = modes[id]; if (m && m.start) m.start(API);
@@ -488,8 +514,11 @@ window.addEventListener('resize', () => { resize(); if (E.phase === 'pour' || E.
 function stepFx(dt) {
   pAlive = 0;
   for (let i = 0; i < T.MAXP; i++) { const p = parts[i]; if (!p.a) continue; p.l += dt; if (p.l >= p.m) { p.a = 0; continue; } pAlive++;
-    if (p.k === 2) { p.vx *= 1 - 0.8 * dt; p.vy = p.vy * (1 - 0.9 * dt); p.s += dt * 9; } else { p.vx *= 1 - 1.5 * dt; p.vy += p.g * dt; }
-    p.x += p.vx * dt; p.y += p.vy * dt; p.r += p.vr * dt; }
+    if (p.k === 2) { // curl-noise swirl: velocity from a moving stream function ψ = sin(ax+ωt+φ)·cos(by) → divergence-free curls
+      const a = 0.055, b = 0.07, ph = a * p.x + G.t * 1.1 + p.g, sa = Math.sin(ph), ca = Math.cos(ph), sb = Math.sin(b * p.y), cb = Math.cos(b * p.y), A = 260;
+      p.vx += ((-A * b * sa * sb) - p.vx) * 1.6 * dt; p.vy += ((-A * a * ca * cb) * 0.6 + 9 - p.vy) * 0.9 * dt; p.s += dt * 7; p.r += (p.vx * 0.01) * dt; }
+    else if (p.k === 5) {} else { p.vx *= 1 - 1.5 * dt; p.vy += p.g * dt; }
+    p.x += p.vx * dt; p.y += p.vy * dt; if (p.k !== 2) p.r += p.vr * dt; else p.r += p.vr * 0.15 * dt; }
   for (const o of pops) if (o.a) { o.t += dt; if (o.t >= 1.1) o.a = 0; }
   G.shake = Math.max(0, G.shake - dt * 25); G.flash = Math.max(0, G.flash - dt * 1.6); G.scorePop = Math.max(0, (G.scorePop || 0) - dt * 3);
   if (G.toastT > 0) G.toastT -= dt; if (E.mixHint > 0) E.mixHint -= dt;
@@ -529,44 +558,67 @@ function drawGlass(alpha) {
   // interior back
   glassPath(gx, g, 0); ctx.fillStyle = 'rgba(255,255,255,0.22)'; ctx.fill();
   ctx.save(); glassPath(gx, g, 0); ctx.clip();
-  // liquid layers
-  let cum = 0, prevH = 0; const n = E.layers.length, top = (() => { let k = -1; for (let i = 0; i < n; i++) if (E.layers[i].vol > 0.0005) k = i; return k; })();
+  // liquid layers – drawn top-down, each filled from its (wavy) top edge to the bottom so lower layers overlap
+  let cum = 0; const n = E.layers.length, top = (() => { let k = -1; for (let i = 0; i < n; i++) if (E.layers[i].vol > 0.0005) k = i; return k; })();
   const hs = []; for (let i = 0; i < n; i++) { const L = E.layers[i]; cum += lerp(L.pv, L.vol, alpha); hs.push(Math.min(volToH(g, cum), 1.02)); }
-  const L0 = gx - 140, LW = 280;
-  for (let i = 0; i <= top; i++) {
-    const L = E.layers[i], ing = T.ING[L.type], h0 = i ? hs[i - 1] : 0, h1 = hs[i];
-    const y0 = GY - h0 * H + 1, y1 = GY - h1 * H;
-    ctx.fillStyle = ing.col;
-    if (i === top) { // wavy surface
-      const N = T.WAVE_N, hw = g.hw(Math.min(h1, 1)) * GS; ctx.beginPath(); ctx.moveTo(gx - hw - 4, y0 + 2);
-      for (let k = 0; k < N; k++) { const x = gx - hw - 4 + (2 * hw + 8) * k / (N - 1); ctx.lineTo(x, y1 + E.wave[k] * 1 + Math.sin(G.t * 2.2 + k * 0.6) * 0.8); }
-      ctx.lineTo(gx + hw + 4, y0 + 2); ctx.closePath(); ctx.fill();
-      // meniscus highlight
-      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = 2; ctx.beginPath(); for (let k = 0; k < N; k++) { const x = gx - hw - 4 + (2 * hw + 8) * k / (N - 1); ctx[k ? 'lineTo' : 'moveTo'](x, y1 + E.wave[k] + Math.sin(G.t * 2.2 + k * 0.6) * 0.8 + 1.5); } ctx.stroke();
-    } else ctx.fillRect(L0, y1, LW, y0 - y1);
-    if (L.type === 'foam' && y0 - y1 > 3) { // foam texture
-      for (const f of E.foam) { const fy = y1 + 3 + f.y * (y0 - y1 - 4), fx = gx + (f.x - 0.5) * 2 * g.hw(h1) * GS * 0.95, s = 6 * f.s * GS; ctx.drawImage(SPR.foamB, fx - s, fy - s, s * 2, s * 2); }
-    }
-    // boundary with the layer below
-    if (i > 0) {
-      const below = T.ING[E.layers[i - 1].type], m = clamp(L.mix, 0, 1.2), bh = 3 + m * 40 * GS, by = y0 - 1;
-      const gr = ctx.createLinearGradient(0, by - bh * 0.6, 0, by + bh * 0.5);
-      gr.addColorStop(0, ing.col); gr.addColorStop(0.5, boundCol(ing.col, below.col, m)); gr.addColorStop(1, below.col);
-      ctx.fillStyle = gr; ctx.fillRect(L0, by - bh * 0.6, LW, Math.min(bh * 1.1, (by - y1) + bh * 0.5));
+  const sl = lerp(E.psl, E.sl, alpha), t = G.t, XW = g.hw(1) * GS + 10, NP = T.WAVE_N, w = E.wave;
+  const sh = top >= 0 ? Math.min(hs[top], 1) : 0, shw = g.hw(sh) * GS, sYb = GY - sh * H;
+  const topIsFoam = top >= 0 && E.layers[top].type === 'foam';
+  // surface height at x (wave columns span the surface width; tilt + meniscus + idle shimmer)
+  const surfY = x => { const u = clamp((x - (gx - shw)) / (2 * shw), 0, 1), f = u * (NP - 1), k = Math.min(NP - 2, Math.floor(f)), wv = lerp(w[k], w[k + 1], f - k) * (topIsFoam ? 0.55 : 1);
+    const xn = (x - gx) / shw, d = shw - Math.abs(x - gx);
+    let y = sYb + wv + sl * xn + Math.sin(t * 2.1 + x * 0.07) * 0.7 - 3.2 * GS * Math.exp(-Math.max(0, d) / (5 * GS));
+    if (topIsFoam) y -= Math.abs(Math.sin(x * 0.17 + t * 0.9)) * 2.6 * GS + Math.sin(x * 0.05 - t * 1.7) * 1.2;
+    return y; };
+  const edgeY = (i, x) => { const y = GY - hs[i] * H, m = clamp(E.layers[i + 1] ? E.layers[i + 1].mix : 0, 0, 1.2);
+    return y + sl * 0.5 * (x - gx) / shw + T.BOUND_WOB * (1 + m * 1.6) * Math.sin(x * 0.045 + t * 1.25 + i * 1.7) + 0.7 * Math.sin(x * 0.12 - t * 2.0 + i); };
+  const edge = (i, x) => i === top ? surfY(x) : edgeY(i, x);
+  const SEG = 32, x0 = gx - XW, dx = 2 * XW / SEG;
+  for (let i = top; i >= 0; i--) {
+    const ing = T.ING[E.layers[i].type];
+    ctx.fillStyle = ing.col; ctx.beginPath(); ctx.moveTo(x0, GY + 12);
+    for (let k = 0; k <= SEG; k++) { const x = x0 + k * dx; ctx.lineTo(x, edge(i, x)); }
+    ctx.lineTo(x0 + 2 * XW, GY + 12); ctx.closePath(); ctx.fill();
+    if (E.layers[i].type === 'foam') { const y1 = GY - hs[i] * H, y0 = i ? GY - hs[i - 1] * H : GY; if (y0 - y1 > 3) for (const f of E.foam) { const fy = y1 + 4 + f.y * (y0 - y1 - 5), fx = gx + (f.x - 0.5) * 2 * g.hw(hs[i]) * GS * 0.95 + Math.sin(t * 1.3 + f.x * 9) * 1.2, s = 6 * f.s * GS * (1 + 0.06 * Math.sin(t * 2 + f.y * 7)); ctx.drawImage(SPR.foamB, fx - s, fy - s, s * 2, s * 2); } }
+    // soft boundary band with the layer above (width/murk grow with mix)
+    if (i < top) {
+      const up = E.layers[i + 1], ui = T.ING[up.type], m = clamp(up.mix, 0, 1.2), bh = 3 + m * 40 * GS, by = GY - hs[i] * H;
+      const room = Math.max(2, by - (GY - hs[i + 1] * H)), a = Math.min(bh * 0.6, room), b2 = bh * 0.5;
+      const gr = ctx.createLinearGradient(0, by - a, 0, by + b2); gr.addColorStop(0, ui.col); gr.addColorStop(0.5, boundCol(ui.col, ing.col, m)); gr.addColorStop(1, ing.col);
+      ctx.fillStyle = gr; ctx.beginPath();
+      for (let k = 0; k <= SEG; k++) { const x = x0 + k * dx; ctx.lineTo(x, edgeY(i, x) - a); }
+      for (let k = SEG; k >= 0; k--) { const x = x0 + k * dx; ctx.lineTo(x, edgeY(i, x) + b2); }
+      ctx.closePath(); ctx.fill();
     }
   }
-  // depth shading over liquid (one gradient)
-  if (top >= 0) { const sg = ctx.createLinearGradient(gx - 110, 0, gx + 110, 0); sg.addColorStop(0, 'rgba(60,70,40,0.16)'); sg.addColorStop(0.3, 'rgba(255,255,255,0.06)'); sg.addColorStop(0.75, 'rgba(60,70,40,0)'); sg.addColorStop(1, 'rgba(60,70,40,0.14)'); ctx.fillStyle = sg; ctx.fillRect(L0, GY - Math.min(hs[top], 1) * H - 6, LW, Math.min(hs[top], 1) * H + 8); }
-  // in-liquid particles
-  for (let i = 0; i < T.MAXP; i++) { const p = parts[i]; if (!p.a || (p.k !== 1 && p.k !== 2)) continue; const f = p.l / p.m;
-    if (p.k === 2) { ctx.globalAlpha = 0.55 * Math.sin(f * Math.PI); ctx.drawImage(SPR.cloud, p.x - p.s, p.y - p.s, p.s * 2, p.s * 2); }
+  if (top >= 0) {
+    // depth shading (one gradient) + moving light/refraction stripes (pre-rendered sprite, no blur)
+    const sg = ctx.createLinearGradient(gx - 110, 0, gx + 110, 0); sg.addColorStop(0, 'rgba(60,70,40,0.16)'); sg.addColorStop(0.3, 'rgba(255,255,255,0.06)'); sg.addColorStop(0.75, 'rgba(60,70,40,0)'); sg.addColorStop(1, 'rgba(60,70,40,0.14)');
+    ctx.fillStyle = sg; ctx.fillRect(x0, sYb - 8, 2 * XW, sh * H + 10);
+    const lx = gx - shw * 0.42 + Math.sin(t * 0.55) * 9 * GS + sl * 1.6, lw = 22 * GS;
+    ctx.globalAlpha = 0.55; ctx.drawImage(SPR.stripe, lx - lw / 2, sYb + 4, lw, sh * H - 4);
+    ctx.globalAlpha = 0.32; ctx.drawImage(SPR.stripe, lx + 26 * GS + Math.sin(t * 0.8 + 1) * 6, sYb + 8, lw * 0.45, sh * H - 8); ctx.globalAlpha = 1;
+    // surface sheen: bright rim line following the waves + meniscus glints at the walls
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)'; ctx.lineWidth = 2; ctx.beginPath();
+    for (let k = 0; k <= SEG; k++) { const x = gx - shw + 2 * shw * k / SEG; ctx[k ? 'lineTo' : 'moveTo'](x, surfY(x) + 1.6); } ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
+    for (const s of [-1, 1]) { const xw = gx + s * shw, yw = surfY(xw - s * 1); ctx.beginPath(); ctx.moveTo(xw - s * 1.5, yw + 0.5); ctx.quadraticCurveTo(xw - s * 5 * GS, yw + 3.2 * GS, xw - s * 11 * GS, yw + 3.6 * GS); ctx.stroke(); }
+    ctx.lineCap = 'butt';
+  }
+  // in-liquid particles: bubbles, curling matcha clouds, ripple rings at the impact point
+  for (let i = 0; i < T.MAXP; i++) { const p = parts[i]; if (!p.a || (p.k !== 1 && p.k !== 2 && p.k !== 5)) continue; const f = p.l / p.m;
+    if (p.k === 2) { const a = 0.74 * Math.sin(f * Math.PI), s = p.s; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r);
+      ctx.globalAlpha = a; ctx.drawImage(SPR.cloud, -s * 1.35, -s * 0.8, s * 2.7, s * 1.6);
+      ctx.globalAlpha = a * 0.75; ctx.drawImage(SPR.cloud, s * 0.5, -s * 0.9 + Math.sin(p.l * 3) * s * 0.2, s * 1.1, s * 1.1); ctx.drawImage(SPR.cloud, -s * 1.5, s * 0.1, s * 0.9, s * 0.9);
+      ctx.restore(); }
+    else if (p.k === 5) { const r = p.s + f * 26 * GS; ctx.globalAlpha = 0.75 * (1 - f); ctx.strokeStyle = '#ffffff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(p.x, Math.min(p.y, surfY(p.x) + 1), r, r * 0.26, 0, 0, 7); ctx.stroke(); }
     else { ctx.globalAlpha = 0.7 * (1 - f); ctx.drawImage(SPR.bubble, p.x - p.s, p.y - p.s, p.s * 2, p.s * 2); } }
   ctx.globalAlpha = 1;
-  // ice cubes (float at the surface)
-  const sh = top >= 0 ? Math.min(hs[top], 1) : 0, sy = GY - sh * H;
+  // ice cubes bob with the local surface height and tilt with its slope
   for (const c of E.ice) {
-    const restY = GY - c.rest, fy = sy + c.s * 0.22 + Math.sin(G.t * 1.6 + c.ph) * 1.5, y = Math.min(restY, fy), x = gx + c.x;
-    ctx.save(); ctx.translate(x, y); ctx.rotate(c.r + Math.sin(G.t + c.ph) * 0.03);
+    const x = gx + c.x, restY = GY - c.rest, wy = top >= 0 ? surfY(x) : GY + 99, slope = top >= 0 ? (surfY(x + 8) - surfY(x - 8)) / 16 : 0;
+    const fy = wy + c.s * 0.22 + Math.sin(t * 1.6 + c.ph) * 1.2, y = Math.min(restY, fy), floating = fy < restY;
+    ctx.save(); ctx.translate(x, y); ctx.rotate(c.r + Math.sin(t + c.ph) * 0.03 + (floating ? Math.atan(slope) * 0.7 : 0));
     ctx.fillStyle = 'rgba(255,255,255,0.38)'; ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = 2;
     ctx.beginPath(); rr(-c.s / 2, -c.s / 2, c.s, c.s, 7); ctx.fill(); ctx.stroke();
     ctx.fillStyle = 'rgba(255,255,255,0.7)'; ctx.beginPath(); rr(-c.s / 2 + 5, -c.s / 2 + 4, c.s * 0.35, 4, 2); ctx.fill();
@@ -592,13 +644,6 @@ function drawGlass(alpha) {
     if (L.res) { ctx.font = font(13, 900); ctx.textAlign = 'left'; ctx.fillStyle = L.res.miss ? '#d4607a' : '#5f843b'; ctx.fillText(L.res.miss ? '✕' : '✓', x + 17, y + 5); }
     else if (act) { ctx.font = font(11, 800); ctx.textAlign = 'left'; ctx.fillStyle = ing.dark; ctx.fillText(ing.name, x + 18, y + 4); }
   }
-  // commit ring
-  if (E.phase === 'pour' && !E.pouring && E.idle > 0) {
-    const L = curLayer(), far = volToH(g, cumVol(E.ci)) < L.target - E.band, f = clamp(E.idle / (far ? T.COMMIT_FAR : T.COMMIT), 0, 1);
-    const x = gx - g.hw(L.target) * GS - 20, y = GY - L.target * H;
-    ctx.strokeStyle = 'rgba(95,132,59,0.25)'; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(x, y, 9, 0, 7); ctx.stroke();
-    ctx.strokeStyle = '#5f843b'; ctx.beginPath(); ctx.arc(x, y, 9, -Math.PI / 2, -Math.PI / 2 + f * Math.PI * 2); ctx.stroke();
-  }
   // perfect shine
   if (E.done && E.done.perfect && E.phase === 'judge') { const f = clamp(E.judgeT / 0.6, 0, 1); ctx.save(); glassPath(gx, g, 0); ctx.clip(); ctx.globalAlpha = 0.5 * Math.sin(f * Math.PI); ctx.fillStyle = '#fff'; ctx.beginPath(); const sx = gx - 120 + f * 260; ctx.moveTo(sx, GY - H - 20); ctx.lineTo(sx + 30, GY - H - 20); ctx.lineTo(sx - 30, GY + 20); ctx.lineTo(sx - 60, GY + 20); ctx.fill(); ctx.restore(); ctx.globalAlpha = 1; }
   if (E.failFx > 0 && E.done && E.done.reason !== 'ok') { ctx.globalAlpha = E.failFx * 0.35; glassPath(gx, g, 0); ctx.fillStyle = '#e8909e'; ctx.fill(); ctx.globalAlpha = 1; }
@@ -612,21 +657,36 @@ function drawTargets(gx, g, H) {
     ctx.setLineDash(L.res ? [] : [7, 6]); ctx.beginPath(); ctx.moveTo(gx - hw, y); ctx.lineTo(gx + hw, y); ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha = 1;
   }
 }
+function jugGeo(gx) { // jug + spout position (shared by sim and render so the stream always leaves the spout)
+  const H = E.glass.H * GS, jx = gx + 40 * GS, jy = GY - H - 78 * GS, ang = -0.25 - E.jugA * 0.45;
+  return { jx, jy, ang, sx: jx - 28 * GS * Math.cos(ang), sy: jy - 28 * GS * Math.sin(ang) };
+}
 function drawJug(alpha) {
   if (!E.glass || E.phase === 'none' || E.phase === 'gone' || !E.layers.length) return;
   const L = curLayer() || E.layers[E.layers.length - 1], ing = T.ING[L.type], g = E.glass, gx = lerp(E.pgx, E.gx, alpha);
-  const H = g.H * GS, topY = GY - H, jx = gx + 40 * GS, jy = topY - 78 * GS, sx = gx + 12 * GS, spoutY = jy + 6;
+  const H = g.H * GS, J = jugGeo(gx), ix = gx + 10 * GS;
   const ok = E.phase === 'pour' || E.phase === 'judge';
-  // stream
+  // stream: one continuous curved ribbon from the spout to the surface, with a travelling wobble and a neck
   if (E.streamW > 0.4 && ok) {
-    const sh = Math.min(surfH(), 1), sy = GY - sh * H + 2, st = spoutY + (E.pouring ? 0 : E.streamTop);
-    if (st < sy) { const w = E.streamW * GS; ctx.fillStyle = ing.col === '#fbf7ee' || ing.col === '#fffdf7' || ing.col === '#efe7d6' ? '#f3ecdc' : ing.col;
-      ctx.beginPath(); ctx.moveTo(sx - w * 0.6, st); ctx.quadraticCurveTo(sx - w * 0.45, (st + sy) / 2, sx - w / 2 + Math.sin(G.t * 30) * 0.4, sy); ctx.lineTo(sx + w / 2, sy); ctx.quadraticCurveTo(sx + w * 0.45, (st + sy) / 2, sx + w * 0.6, st); ctx.closePath(); ctx.fill();
-      ctx.strokeStyle = 'rgba(120,110,80,0.25)'; ctx.lineWidth = 1; ctx.stroke();
-      ctx.fillStyle = 'rgba(255,255,255,0.5)'; ctx.fillRect(sx - w * 0.2, st, Math.max(1, w * 0.15), sy - st); }
+    const sh = Math.min(surfH(), 1), iy = GY - sh * H + 3, y0 = J.sy + (E.pouring ? 0 : E.streamTop);
+    if (y0 < iy) { const W = E.streamW * GS, N = 16, t = G.t, Lx = [], Rx = [], Ys = [], Cx = [];
+      const col = ing.col === '#fbf7ee' || ing.col === '#fffdf7' || ing.col === '#efe7d6' ? '#f3ecdc' : ing.col;
+      for (let k = 0; k <= N; k++) {
+        const y = lerp(y0, iy, k / N), s = (y - J.sy) / Math.max(1, iy - J.sy); // 0 at spout → 1 at surface
+        const cx = lerp(J.sx, ix, Math.sqrt(clamp(s, 0, 1))) + Math.sin(s * 10 - t * 17) * (0.5 + s) * (0.4 + E.streamW * 0.05);
+        const ww = W * (1.25 - 0.45 * Math.sqrt(s) + 0.07 * Math.sin(s * 15 - t * 23)) * (s > 0.92 ? 1 + (s - 0.92) * 3 : 1);
+        Lx.push(cx - ww / 2); Rx.push(cx + ww / 2); Ys.push(y); Cx.push(cx);
+      }
+      ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(Lx[0], Ys[0]);
+      for (let k = 1; k <= N; k++) ctx.lineTo(Lx[k], Ys[k]);
+      for (let k = N; k >= 0; k--) ctx.lineTo(Rx[k], Ys[k]); ctx.closePath(); ctx.fill();
+      ctx.strokeStyle = 'rgba(120,110,80,0.22)'; ctx.lineWidth = 1; ctx.stroke();
+      ctx.strokeStyle = 'rgba(255,255,255,0.55)'; ctx.lineWidth = Math.max(1, W * 0.16); ctx.lineCap = 'round'; ctx.beginPath();
+      for (let k = 0; k <= N; k++) ctx[k ? 'lineTo' : 'moveTo'](lerp(Lx[k], Cx[k], 0.45), Ys[k]); ctx.stroke(); ctx.lineCap = 'butt';
+    }
   }
   // jug (small carafe) tilts while pouring
-  ctx.save(); ctx.translate(jx, jy); ctx.rotate(-0.25 - E.jugA * 0.45); const s = GS;
+  ctx.save(); ctx.translate(J.jx, J.jy); ctx.rotate(J.ang); const s = GS;
   ctx.fillStyle = 'rgba(255,255,255,0.75)'; ctx.strokeStyle = 'rgba(120,145,110,0.6)'; ctx.lineWidth = 2;
   ctx.beginPath(); ctx.moveTo(-28 * s, 0); ctx.lineTo(-22 * s, -12 * s); ctx.lineTo(18 * s, -12 * s); ctx.lineTo(24 * s, 46 * s); ctx.quadraticCurveTo(0, 54 * s, -22 * s, 46 * s); ctx.lineTo(-18 * s, 4 * s); ctx.closePath(); ctx.fill(); ctx.stroke();
   ctx.fillStyle = ing.col; ctx.strokeStyle = ing.dark; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(-16 * s, 18 * s); ctx.lineTo(21 * s, 18 * s); ctx.lineTo(23 * s, 44 * s); ctx.quadraticCurveTo(0, 51 * s, -20 * s, 44 * s); ctx.closePath(); ctx.fill(); ctx.stroke();
@@ -634,11 +694,11 @@ function drawJug(alpha) {
   ctx.restore();
 }
 function drawOuterFx() {
-  for (let i = 0; i < T.MAXP; i++) { const p = parts[i]; if (!p.a || p.k === 1 || p.k === 2) continue; const f = p.l / p.m;
+  for (let i = 0; i < T.MAXP; i++) { const p = parts[i]; if (!p.a || p.k === 1 || p.k === 2 || p.k === 5) continue; const f = p.l / p.m;
     if (p.k === 0) { ctx.globalAlpha = 1 - f * f; ctx.fillStyle = p.c; ctx.beginPath(); ctx.arc(p.x, p.y, p.s, 0, 7); ctx.fill(); }
     else { ctx.globalAlpha = 1 - f; const spr = p.k === 3 ? SPR.spark : SPR.leaf; ctx.save(); ctx.translate(p.x, p.y); ctx.rotate(p.r); ctx.drawImage(spr, -p.s, -p.s, p.s * 2, p.s * 2); ctx.restore(); } }
   ctx.globalAlpha = 1;
-  for (const o of pops) if (o.a) { const e = Math.min(1, o.t / 0.15), s = o.s * (0.6 + 0.4 * e + (e < 1 ? 0.15 * Math.sin(e * Math.PI) : 0)); ctx.globalAlpha = o.t > 0.8 ? 1 - (o.t - 0.8) / 0.3 : 1; ctx.save(); ctx.translate(o.x, Math.max(safeTop + 120, o.y - o.t * 34)); ctx.scale(s, s); textOut(o.txt, 0, 0, 30, o.c); ctx.restore(); }
+  for (const o of pops) if (o.a) { const e = Math.min(1, o.t / 0.15), s = o.s * (0.6 + 0.4 * e + (e < 1 ? 0.15 * Math.sin(e * Math.PI) : 0)); ctx.globalAlpha = o.t > 0.8 ? 1 - (o.t - 0.8) / 0.3 : 1; ctx.save(); ctx.translate(o.x, Math.max(safeTop + 120, G.topReserve + 26, o.y - o.t * 34)); ctx.scale(s, s); textOut(o.txt, 0, 0, 30, o.c); ctx.restore(); }
   ctx.globalAlpha = 1;
 }
 function drawMute() {
@@ -674,12 +734,11 @@ function drawHud() {
   if (!hint && E.hintsOn && E.phase === 'pour' && G.state === 'play') {
     const L = curLayer(), lv = volToH(E.glass, cumVol(E.ci));
     if (E.mixHint > 0) hint = 'Langsamer = saubere Schichten!';
-    else if (!E.pouring && L.vol <= T.TINY) hint = L.type === 'matcha' && E.ci > 0 ? 'Matcha läuft nach – früher loslassen!' : L.type === 'foam' ? 'Cold Foam steigt nach!' : L.type === 'strawberry' ? 'Erdbeere fließt langsam' : 'Halten zum Eingießen';
+    else if (!E.pouring && !L.locked) hint = E.ci === 0 && G.seen.n1 === undefined ? 'Halten = gießen · Loslassen = Schicht fertig' : L.type === 'matcha' && E.ci > 0 ? 'Matcha läuft nach – früher loslassen!' : L.type === 'foam' ? 'Cold Foam steigt nach!' : L.type === 'strawberry' ? 'Erdbeere fließt langsam' : 'Ein Halten pro Schicht';
     else if (E.pouring) hint = lv > L.target - E.band * 1.4 ? 'Jetzt loslassen!' : 'Halten…';
-    else hint = 'Kurz warten = fertig · Halten = nachgießen';
   }
   if (hint) { ctx.globalAlpha = 0.8 + 0.2 * Math.sin(G.t * 6); textOut(hint, CX, GY + 52, 17, '#3f5a2c', 800); ctx.globalAlpha = 1;
-    if (E.hintsOn && !E.pouring && E.layers.length && curLayer() && curLayer().vol <= T.TINY && E.phase === 'pour') drawHand(CX + 150, GY - 30 + Math.sin(G.t * 5) * 4, 0.5 + 0.5 * Math.sin(G.t * 5)); }
+    if (E.hintsOn && !E.pouring && E.layers.length && curLayer() && !curLayer().locked && E.phase === 'pour') drawHand(CX + 150, GY - 30 + Math.sin(G.t * 5) * 4, 0.5 + 0.5 * Math.sin(G.t * 5)); }
   drawMute();
 }
 function drawHand(x, y, press) {
@@ -707,7 +766,7 @@ function drawMenu() {
   ctx.lineWidth = 10; ctx.strokeStyle = '#fffdf6'; ctx.strokeText(T.TITLE, 0, 0);
   const tg = ctx.createLinearGradient(0, -44, 0, 6); tg.addColorStop(0, '#5f843b'); tg.addColorStop(0.55, '#8aac5c'); tg.addColorStop(1, '#d8b98a'); ctx.fillStyle = tg; ctx.fillText(T.TITLE, 0, 0); ctx.restore();
   ctx.font = font(12, 800); ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(92,122,69,0.8)'; ctx.fillText(T.SUBTITLE, CX, ty + 26);
-  ctx.font = font(14, 700); ctx.fillStyle = '#4c6a37'; ctx.fillText('Halten = gießen · Am Strich loslassen', CX, ty + 50);
+  ctx.font = font(14, 700); ctx.fillStyle = '#4c6a37'; ctx.fillText('Halten = gießen · Loslassen = Schicht fertig', CX, ty + 50);
   const bw = 210; button(BTN.endless, CX - bw / 2, ty + 72, bw, 54, '▶  Endlos', true, false);
   button(BTN.rush, CX - bw / 2, ty + 138, bw, 42, modes.rush ? modes.rush.label : 'Rush Hour (bald)', false, !modes.rush);
   const b = bestOf('endless'); if (b > 0) { ctx.font = font(14, 900); ctx.fillStyle = '#b98a25'; ctx.textAlign = 'center'; ctx.fillText('Bestwert ' + b, CX, ty + 202); }
@@ -757,6 +816,6 @@ resize(); setMode('menu');
 requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
 
 // test / debug hook
-window.__omm = { G, E, T, BUILD, step, sfx, parts, BTN, scale: () => scale, API, genRecipe, volToH, hToVol, surfH, cumVol, Endless,
+window.__omm = { G, E, T, BUILD, step, render, sfx, parts, BTN, scale: () => scale, API, genRecipe, volToH, hToVol, surfH, cumVol, Endless,
   q: () => ({ dpr, qDpr, lowFx, VW, VH, GY, GS, pAlive }), hold(v) { G.hold = !!v; if (!v) E.needRelease = false; } };
 })();

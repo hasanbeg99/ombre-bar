@@ -1,7 +1,7 @@
 /* Ombré Bar – Schichten. Gießen. Genießen.  (c) 2026 Oruci Sabahudin. Original code & procedural art/audio. */
 'use strict';
 (() => {
-const BUILD = 'OMM_BUILD v1.1.0 2026-10-23';
+const BUILD = 'OMM_BUILD v1.2.0 2026-10-23';
 
 // ───────────────────────── TUNING (all gameplay numbers live here) ─────────────────────────
 const T = {
@@ -13,7 +13,7 @@ const T = {
   F1_0: 0.42, F1_1: 0.62,           // max stream at difficulty 0 → 1
   RAMP_T0: 2.1, RAMP_T1: 1.4,       // s of continuous holding until max stream (difficulty 0 → 1)
   RAMP_POW: 1.7,                    // ramp curve (>1 = gentle start, then rushes)
-  MIX0: 0.24, MIX_K: 2.4,           // stream above MIX0 churns the boundary below (mix += excess*K*dt)
+  MIX0: 0.24, MIX_K: 1.0,           // stream above MIX0 churns the boundary below (mix += excess*K*dt)
   MIN_HOLD: 0.07,                   // s – a shorter press is treated as an accidental tap and undone
   LOCK_SHOW: 0.55,                  // s max after release until the verdict pops (judging uses the settled level anyway)
   // judging (height fraction of the glass)
@@ -34,20 +34,27 @@ const T = {
   SLOSH_K: 46, SLOSH_DAMP: 2.2, SLOSH_GAIN: 0.17, // whole-surface tilt mode driven by glass acceleration
   BOUND_WOB: 1.6,                   // px soft undulation of layer boundaries
   MAXP: 300,                        // particle cap
+  // v1.2 speed bonus: time from 'glass ready' to 'last layer locked' vs a par time per recipe
+  PAR_START: 0.8, PAR_GAP: 0.9,     // par = PAR_START + Σ(ideal hold time of the layer + PAR_GAP)
+  SPEED_SPAN: 0.32,                 // bonus share grows linearly from t = par down to t = par·(1−SPAN)
+  SPEED_CAP: 0.25,                  // bonus ≤ 25 % of the glass points
+  BLITZ: 0.8,                       // bonus share ≥ this → 'BLITZ!'
+  RUSH_MIX: 0.2, SETTLE_T: 0.55,    // starting a layer before the previous one settled churns the boundary (speed vs clean)
+  PROTECT: 3,                       // Endless: first N glasses have no ice timer and cost no life
   // ingredients: flow = stream multiplier, tail = after-flow (s of current stream) arriving over tailT,
   // rise = share of the poured volume that expands afterwards over riseT (foam), cloud = sinking cloud fx
   ING: {
-    milk:       { name: 'Milch',     col: '#fbf7ee', dark: '#b3a584', flow: 1.00, tail: 0.015, tailT: 0.12, rise: 0,    riseT: 1,   cloud: 0 },
-    matcha:     { name: 'Matcha',    col: '#8aac5c', dark: '#5f843b', flow: 0.95, tail: 0.10,  tailT: 0.45, rise: 0,    riseT: 1,   cloud: 1 },
-    strawberry: { name: 'Erdbeere',  col: '#e98c9c', dark: '#c9607a', flow: 0.72, tail: 0.06,  tailT: 0.60, rise: 0,    riseT: 1,   cloud: 0 },
-    coconut:    { name: 'Kokos',     col: '#efe7d6', dark: '#a8956a', flow: 1.05, tail: 0.035, tailT: 0.20, rise: 0,    riseT: 1,   cloud: 0 },
-    foam:       { name: 'Cold Foam', col: '#fffdf7', dark: '#ada38c', flow: 0.85, tail: 0.01,  tailT: 0.10, rise: 0.24, riseT: 0.9, cloud: 0 },
+    milk:       { name: 'Milch', short: 'Milch',     col: '#fbf7ee', dark: '#b3a584', flow: 1.00, tail: 0.015, tailT: 0.12, rise: 0,    riseT: 1,   cloud: 0 },
+    matcha:     { name: 'Matcha', short: 'Matcha',    col: '#8aac5c', dark: '#5f843b', flow: 0.95, tail: 0.10,  tailT: 0.45, rise: 0,    riseT: 1,   cloud: 1 },
+    strawberry: { name: 'Erdbeere', short: 'Erdbeere',  col: '#e98c9c', dark: '#c9607a', flow: 0.72, tail: 0.06,  tailT: 0.60, rise: 0,    riseT: 1,   cloud: 0 },
+    coconut:    { name: 'Kokos', short: 'Kokos',     col: '#efe7d6', dark: '#a8956a', flow: 1.05, tail: 0.035, tailT: 0.20, rise: 0,    riseT: 1,   cloud: 0 },
+    foam:       { name: 'Cold Foam', short: 'Schaum', col: '#fffdf7', dark: '#ada38c', flow: 0.85, tail: 0.01,  tailT: 0.10, rise: 0.24, riseT: 0.9, cloud: 0 },
   },
   // glass shapes: H = inner height (px), hw(h) = inner half width at height fraction h
   GLASS: {
-    tall:  { H: 320, base: 18, hw: h => 60 + 16 * h },
-    short: { H: 222, base: 24, hw: h => 88 + 12 * h },
-    cup:   { H: 270, base: 14, hw: h => 40 + 58 * Math.sqrt(h) },
+    tall:  { H: 320, mm: 150, base: 18, hw: h => 60 + 16 * h },
+    short: { H: 222, mm: 100, base: 24, hw: h => 88 + 12 * h },
+    cup:   { H: 270, mm: 90, base: 14, hw: h => 40 + 58 * Math.sqrt(h) },
   },
 };
 
@@ -180,6 +187,8 @@ const sfx = {
   miss() { if (!ok()) return; const t = S.ctx.currentTime; tn(t, 'sine', 300, 150, 0.32, 0.18); tn(t + 0.12, 'sine', 220, 110, 0.35, 0.14); },
   spill() { if (!ok()) return; const t = S.ctx.currentTime; nz(t, 0.6, 'lowpass', 2400, 0.8, 0.5, 260); tn(t, 'sine', 240, 90, 0.4, 0.15); },
   fizz() { if (!ok()) return; nz(S.ctx.currentTime, rnd(0.02, 0.05), 'highpass', rnd(3000, 6000), 1, 0.05); },
+  lock() { if (!ok()) return; const t = S.ctx.currentTime; nz(t, 0.035, 'highpass', 3800, 1.2, 0.16); tn(t, 'sine', 1900, 1500, 0.06, 0.07, 0.001); tn(t + 0.012, 'triangle', 620, 520, 0.07, 0.06, 0.001); },
+  tempo(b) { if (!ok()) return; const t = S.ctx.currentTime + 0.25; [1319, 1760].concat(b ? [2349] : []).forEach((f, i) => tn(t + i * 0.05, 'sine', f, f, 0.16, 0.05)); },
   ui() { if (!ok()) return; tn(S.ctx.currentTime, 'sine', 700, 1050, 0.09, 0.08); },
   record() { if (!ok()) return; const t = S.ctx.currentTime; [784, 988, 1175, 1568, 1976].forEach((f, i) => tn(t + i * 0.08, 'triangle', f, f, 0.34, 0.08)); },
   over() { if (!ok()) return; const t = S.ctx.currentTime; [659, 523, 440].forEach((f, i) => tn(t + i * 0.12, 'triangle', f, f, 0.4, 0.08)); },
@@ -209,12 +218,19 @@ const G = { topReserve: 0, state: 'menu', t: 0, shake: 0, flash: 0, over: null, 
 const E = {
   rec: null, glass: null, phase: 'none', t: 0, gx: 0, pgx: 0, layers: [], ci: 0, band: 0.05, perf: 0.012, rampT: 1.5, f1: 0.5,
   pouring: false, holdT: 0, holdVol: 0, holdMix: 0, lockT: 0, rate: 0, prate: 0, idle: 0, needRelease: false, sl: 0, psl: 0, slv: 0, gvel: 0, ringAcc: 0, streamTopY: 0, timeMax: 0, timeLeft: 0,
+  pourT: 0, lockAt: -1, sinceLock: 9, par: 0, lockGlow: 0, card: null,
   done: null, judgeT: 0, emitted: false, queue: null, ice: [], wave: new Float32Array(T.WAVE_N), wv: new Float32Array(T.WAVE_N),
   streamTop: 0, streamW: 0, jugA: 0, glugAcc: 0, foam: [], bot: false, botAim: 0, hintsOn: false, mixHint: false, spillT: 0, failFx: 0,
 };
 const cbs = new Set();
 function D() { return E.rec && E.rec.diff !== undefined ? E.rec.diff : 0; }
 
+// ideal (uninterrupted) hold time to pour volume dv with the current ramp
+function holdTimeFor(dv, flow) { let v = 0, t = 0; const h = 1 / 60; while (v < dv && t < 20) { const f = Math.pow(clamp(t / E.rampT, 0, 1), T.RAMP_POW); v += flow * (T.F0 + (E.f1 - T.F0) * f) * h; t += h; } return t; }
+function parTime() { let t = T.PAR_START, prev = 0; for (const L of E.layers) { const ing = T.ING[L.type], v = hToVol(E.glass, L.target), dv = Math.max(0, (v - prev) / (1 + ing.rise) - ing.flow * E.f1 * ing.tail * 0.5); prev = v; t += holdTimeFor(dv, ing.flow) + T.PAR_GAP; } return t; }
+// German millimetre strings: 1 decimal, decimal comma, real minus sign
+const fmt1 = v => Math.abs(v).toFixed(1).replace('.', ',');
+const mmSigned = v => (Math.round(Math.abs(v) * 10) === 0 ? '' : v > 0 ? '+' : '\u2212') + fmt1(v);
 function initGlass(rec) {
   const g = T.GLASS[rec.glass] || T.GLASS.tall;
   const d = clamp(rec.diff !== undefined ? rec.diff : (typeof rec.difficulty === 'number' ? rec.difficulty : 0.3), 0, 1);
@@ -226,6 +242,7 @@ function initGlass(rec) {
   E.timeMax = rec.time > 0 ? rec.time : 0; E.timeLeft = E.timeMax; E.done = null; E.emitted = false; E.judgeT = 0;
   E.needRelease = G.hold; E.bot = !!rec.bot; E.hintsOn = !!rec.hints; E.spillT = 0; E.failFx = 0;
   E.wave.fill(0); E.wv.fill(0); E.streamW = 0; E.jugA = 0; E.sl = E.psl = E.slv = 0; E.gvel = 0; E.lockT = 0; E.holdMix = 0;
+  E.pourT = 0; E.lockAt = -1; E.sinceLock = 9; E.lockGlow = 0; E.card = null; E.par = parTime();
   const R = mulberry((Math.random() * 1e9) | 0), n = rec.glass === 'short' ? 3 : 4; E.ice = [];
   const hw0 = g.hw(0.1) * GS;
   for (let i = 0; i < n; i++) E.ice.push({ x: rnd(-hw0 * 0.45, hw0 * 0.45), s: (rec.glass === 'cup' ? 30 : 36) * GS * (0.85 + R() * 0.3), rest: 0, r: rnd(-0.4, 0.4), ph: R() * 6.28 });
@@ -249,12 +266,12 @@ function settledCum(i) { let s = 0; for (let k = 0; k <= i; k++) { const L = E.l
 function judgeLayer(i) { // judged on the SETTLED level (after-flow included) → result never depends on when the verdict pops
   const L = E.layers[i], actual = volToH(E.glass, settledCum(i)), err = actual - L.target, ae = Math.abs(err);
   const sharp = i === 0 ? 1 : clamp(1 - L.mix, 0, 1);
-  L.res = { type: L.type, target: L.target, actual: +actual.toFixed(4), error: +err.toFixed(4), sharpness: +sharp.toFixed(3), perfect: ae <= E.perf, miss: ae > E.band, knapp: ae > E.band * T.KNAPP && ae <= E.band };
+  L.res = { type: L.type, target: L.target, actual: +actual.toFixed(4), error: +err.toFixed(4), sharpness: +sharp.toFixed(3), perfect: ae <= E.perf, miss: ae > E.band, knapp: ae > E.band * T.KNAPP && ae <= E.band, mm: +(err * (E.glass.mm || 150)).toFixed(1) };
   return L.res;
 }
 function layerPoints(r) { return T.PTS + (r.perfect ? T.PERFECT_PTS : 0) + (r.knapp ? T.KNAPP_PTS : 0) + Math.round(r.sharpness * T.SHARP_PTS); }
 function commitLayer() {
-  const i = E.ci;
+  const i = E.ci; E.layers[i].shown = G.t;
   if (volToH(E.glass, settledCum(E.layers.length - 1)) >= 1) { E.spillT = 1; spillFx(); finishGlass('overflow'); return; }
   const r = judgeLayer(i), y = yOf(Math.min(r.actual, 1)), x = E.gx + E.glass.hw(Math.min(r.actual, 1)) * GS + 34;
   E.idle = 0; sfx.tick();
@@ -262,7 +279,7 @@ function commitLayer() {
   if (r.perfect) { pop(E.gx, y - 24, 'PERFEKT!', '#c99a2e', 1.2); sfx.perfect(i); vib(12); for (let k = 0; k < 10; k++) emit(3, E.gx + rnd(-60, 60), y + rnd(-8, 8), rnd(-60, 60), rnd(-90, -20), rnd(10, 18), rnd(0.5, 0.9)); }
   else if (r.knapp) { pop(E.gx, y - 24, 'KNAPP!', '#d08a3a', 1.05); sfx.knapp(); vib(8); }
   else { pop(E.gx, y - 24, 'GUT', '#6f8f46', 0.95); sfx.good(); }
-  if (i > 0) { if (r.sharpness >= T.SHARP_OK) pop(x, y + 14, 'SAUBER!', '#5f843b', 0.75); else if (r.sharpness < 0.5) pop(x, y + 14, 'TRÜB', '#9a8a5a', 0.7); }
+  if (i > 0) { if (r.sharpness >= T.SHARP_OK) pop(E.gx, y + 12, 'SAUBER!', '#5f843b', 0.75); else if (r.sharpness < 0.5) pop(E.gx, y + 12, 'TRÜB', '#9a8a5a', 0.7); }
   E.ci++; E.pouring = false; E.holdT = 0; E.slv -= 14;
   if (E.ci >= E.layers.length) finishGlass('ok'); // no needRelease: the press that triggered the verdict pours the next layer
 }
@@ -272,9 +289,17 @@ function finishGlass(reason) {
   const rs = E.layers.map(l => l.res), failed = reason !== 'ok';
   let score = 0; if (!failed) { for (const r of rs) score += layerPoints(r); if (E.timeMax) score += Math.round(E.timeLeft / E.timeMax * T.TIME_PTS * rs.length); }
   const perfect = !failed && rs.every((r, i) => r.perfect && (i === 0 || r.sharpness >= T.PERFECT_SHARP));
+  // speed bonus: only for a clean glass (no miss/overflow/timeout, every boundary at least SAUBER), ≤ SPEED_CAP of the glass points
+  const tSec = E.lockAt >= 0 ? E.lockAt : E.pourT, clean = !failed && rs.every((r, i) => i === 0 || r.sharpness >= T.SHARP_OK);
+  const share = clamp((E.par - tSec) / (E.par * T.SPEED_SPAN), 0, 1), speedBonus = clean ? Math.round(T.SPEED_CAP * score * share) : 0;
   E.done = { recipeId: E.rec.id, score, perfect, overflow: reason === 'overflow', failed, timeout: reason === 'timeout', reason,
     time: +(E.timeMax ? E.timeMax - E.timeLeft : E.t).toFixed(2), timeLeft: +E.timeLeft.toFixed(2),
-    layers: rs.map(r => ({ type: r.type, target: r.target, actual: r.actual, error: r.error, sharpness: r.sharpness })) };
+    timeMs: Math.round(tSec * 1000), parMs: Math.round(E.par * 1000), speedBonus, blitz: speedBonus > 0 && share >= T.BLITZ,
+    layers: rs.map(r => ({ type: r.type, target: r.target, actual: r.actual, error: r.error, sharpness: r.sharpness, mm: r.mm })) };
+  const shownN = failed ? Math.min(E.ci + 1, rs.length) : rs.length;
+  E.card = { t: 0, failed, reason, timeMs: E.done.timeMs, speedBonus, blitz: E.done.blitz, clean,
+    items: rs.slice(0, shownN).map(r => ({ name: T.ING[r.type].short || T.ING[r.type].name, mm: r.mm, perfect: r.perfect, miss: r.miss })) };
+  if (speedBonus > 0) sfx.tempo(E.done.blitz);
   E.phase = 'judge'; E.judgeT = 0; E.pouring = false; setPour(0, 0); E.slv += failed ? 70 : 38; // glass is nudged/served → liquid sloshes and settles
   if (G.hold) E.needRelease = true;
   if (perfect) { sfx.glass(); vib([10, 40, 14]); G.flash = 0.5; pop(E.gx, Math.max(yOf(1) - 92, G.topReserve + 46), 'PERFEKTES GLAS!', '#c99a2e', 1.15);
@@ -297,12 +322,15 @@ function deliver(dt) {
 }
 function pourStep(dt) {
   const wantHold = E.bot ? botWants() : (G.hold && !E.needRelease);
+  E.pourT += dt; E.sinceLock += dt;
   let L = curLayer();
   // released layer: verdict after the after-flow (or at the latest LOCK_SHOW); a new press locks it in immediately
   if (L.locked) { E.lockT += dt; if (wantHold || E.lockT >= T.LOCK_SHOW || L.tailP + L.riseP < 0.0006) { commitLayer(); if (E.phase !== 'pour') return; L = curLayer(); } }
   const ing = T.ING[L.type];
   if (wantHold && !L.locked) {
-    if (!E.pouring) { E.pouring = true; E.holdT = 0; E.holdVol = 0; E.holdMix = 0; E.streamTop = 0; }
+    if (!E.pouring) { E.pouring = true; E.holdT = 0; E.holdVol = 0; E.holdMix = 0; E.streamTop = 0;
+      // pouring onto a surface that is still settling (previous layer just locked) churns the boundary → speed vs clean
+      if (E.ci > 0) { const rm = T.RUSH_MIX * clamp(1 - E.sinceLock / T.SETTLE_T, 0, 1); L.mix += rm; E.holdMix += rm; } }
     E.holdT += dt;
     const f = Math.pow(clamp(E.holdT / E.rampT, 0, 1), T.RAMP_POW);
     E.rate = ing.flow * (T.F0 + (E.f1 - T.F0) * f);
@@ -312,7 +340,8 @@ function pourStep(dt) {
     E.pouring = false;
     if (E.holdT < T.MIN_HOLD) { L.vol -= E.holdVol; L.mix -= E.holdMix; if (L.vol < 0) L.vol = 0; } // accidental tap → undone
     else {
-      L.locked = true; E.lockT = 0;
+      L.locked = true; E.lockT = 0; E.sinceLock = 0; E.lockGlow = 1; sfx.lock(); vib(6);
+      if (E.ci === E.layers.length - 1) E.lockAt = E.pourT;
       L.tailP += E.rate * ing.tail; L.tailR = 1 / ing.tailT;
       L.riseP += E.holdVol * ing.rise; L.riseR = 1 / ing.riseT;
       if (ing.cloud && E.ci > 0) L.mix += E.rate * 0.12;
@@ -441,7 +470,8 @@ const RECIPES = [
 ];
 function genRecipe(n) {
   const d = clamp((n - 1) / T.RAMP_GLASSES, 0, 1);
-  if (n === 1) return { id: 'e1', name: 'Iced Matcha Latte', glass: 'tall', diff: 0, band: 1.3, hints: true, time: 0, layers: [{ type: 'milk', target: 0.48 }, { type: 'matcha', target: 0.8 }] };
+  // glass 1: two calm layers (wide band, slower ramp); glasses 1..PROTECT: no ice timer (and no life loss, see Endless)
+  if (n === 1) return { id: 'e1', name: 'Iced Matcha Latte', glass: 'tall', diff: 0, band: 1.3, rampMul: 0.85, hints: true, time: 0, protected: true, layers: [{ type: 'milk', target: 0.48 }, { type: 'matcha', target: 0.8 }] };
   const pool = RECIPES.filter(r => n >= r.from); const fresh = pool.filter(r => n - r.from < 2); // just unlocked → show it
   let r; if (fresh.length && n === fresh[0].from) r = fresh[0]; else { let s = 0; for (const p of pool) s += p.w; let x = Math.random() * s; r = pool[pool.length - 1]; for (const p of pool) { x -= p.w; if (x <= 0) { r = p; break; } } }
   const glass = n <= 3 ? 'tall' : ['tall', 'short', 'cup'][Math.floor(Math.random() * 3)];
@@ -451,7 +481,8 @@ function genRecipe(n) {
   const layers = r.layers.map((t, i) => { acc += Math.max(minT, w[i] / ws * top); return { type: t, target: +Math.min(acc, 0.93).toFixed(3) }; });
   for (let i = 1; i < layers.length; i++) if (layers[i].target <= layers[i - 1].target + 0.06) layers[i].target = +(layers[i - 1].target + 0.08).toFixed(3);
   const time = lerp(T.TIME0, T.TIME1, d) + lerp(T.TIME_LAYER0, T.TIME_LAYER1, d) * k;
-  return { id: 'e' + n, name: r.name, glass, diff: d, time: +time.toFixed(1), hints: n <= 3 || fresh.length > 0, layers };
+  const prot = n <= T.PROTECT;
+  return { id: 'e' + n, name: r.name, glass, diff: d, time: prot ? 0 : +time.toFixed(1), protected: prot, hints: n <= 3 || fresh.length > 0, layers };
 }
 const Endless = (() => {
   let api, run;
@@ -459,21 +490,27 @@ const Endless = (() => {
   function next() { run.n++; api.startGlass(genRecipe(run.n)); hud(); }
   function done(r) {
     run.glasses++;
+    // best single hit of the run (layers of served glasses)
+    if (!r.failed) for (const l of r.layers) if (typeof l.mm === 'number') { const a = Math.abs(l.mm); if (run.bestMm === null || a < run.bestMm) run.bestMm = a; }
     if (r.failed) {
-      run.lives--; run.streak = 0; run.mult = 1; run.last = r.reason;
+      run.streak = 0; run.mult = 1; run.last = r.reason;
+      if (run.n <= T.PROTECT) api.pop('Übung – kein Leben weg', '#6f8f46'); // first glasses are protected
+      else run.lives--;
       if (run.lives <= 0) {
         const t = { overflow: 'Übergelaufen.', timeout: 'Das Eis ist geschmolzen.', miss: 'Schicht verfehlt.' }[r.reason] || '';
-        api.gameOver({ score: run.score, title: 'Feierabend!', sub: t, lines: [`${run.served} Gläser serviert  ·  ${run.perfects} perfekt`] }); return;
+        const lines = [`${run.served} ${run.served === 1 ? 'Glas' : 'Gläser'} serviert  ·  ${run.perfects} perfekt`]; if (run.bestMm !== null) lines.push('Bester Treffer: ' + fmt1(run.bestMm) + ' mm');
+        api.gameOver({ score: run.score, title: 'Feierabend!', sub: t, lines }); return;
       }
     } else {
       run.served++;
       if (r.perfect) { run.streak++; run.perfects++; run.mult = Math.min(T.MULT_MAX, 1 + run.streak); } else { run.streak = 0; run.mult = 1; }
-      const pts = r.score * run.mult; run.score += pts; G.scorePop = 1;
+      // the speed bonus is added AFTER the streak multiplier and never touches the streak itself
+      const sb = r.speedBonus | 0, pts = r.score * run.mult + sb; run.score += pts; G.scorePop = 1;
       api.pop('+' + pts + (run.mult > 1 ? '  ×' + run.mult : ''), r.perfect ? '#c99a2e' : '#5f843b');
     }
     next();
   }
-  return { label: 'Endlos', start(a) { api = a; run = { score: 0, lives: T.LIVES, n: 0, streak: 0, mult: 1, perfects: 0, served: 0, glasses: 0 }; api.onGlassDone(done); next(); }, stop() {}, run: () => run };
+  return { label: 'Endlos', start(a) { api = a; run = { score: 0, lives: T.LIVES, n: 0, streak: 0, mult: 1, perfects: 0, served: 0, glasses: 0, bestMm: null }; api.onGlassDone(done); next(); }, stop() {}, run: () => run };
 })();
 API.registerMode('endless', Endless);
 window.OMM = API;
@@ -522,6 +559,7 @@ function stepFx(dt) {
   for (const o of pops) if (o.a) { o.t += dt; if (o.t >= 1.1) o.a = 0; }
   G.shake = Math.max(0, G.shake - dt * 25); G.flash = Math.max(0, G.flash - dt * 1.6); G.scorePop = Math.max(0, (G.scorePop || 0) - dt * 3);
   if (G.toastT > 0) G.toastT -= dt; if (E.mixHint > 0) E.mixHint -= dt;
+  E.lockGlow = Math.max(0, E.lockGlow - dt * 2.2); if (E.card) E.card.t += dt;
 }
 let pourSoundRate = 0;
 function step(dt) {
@@ -604,6 +642,8 @@ function drawGlass(alpha) {
     ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.6; ctx.lineCap = 'round';
     for (const s of [-1, 1]) { const xw = gx + s * shw, yw = surfY(xw - s * 1); ctx.beginPath(); ctx.moveTo(xw - s * 1.5, yw + 0.5); ctx.quadraticCurveTo(xw - s * 5 * GS, yw + 3.2 * GS, xw - s * 11 * GS, yw + 3.6 * GS); ctx.stroke(); }
     ctx.lineCap = 'butt';
+    if (E.lockGlow > 0) { const a = E.lockGlow; ctx.strokeStyle = 'rgba(255,246,200,' + (0.55 * a).toFixed(3) + ')'; ctx.lineWidth = 3 + 7 * a; ctx.lineCap = 'round'; ctx.beginPath();
+      for (let k = 0; k <= SEG; k++) { const x = gx - shw + 2 * shw * k / SEG; ctx[k ? 'lineTo' : 'moveTo'](x, surfY(x) + 1); } ctx.stroke(); ctx.lineCap = 'butt'; }
   }
   // in-liquid particles: bubbles, curling matcha clouds, ripple rings at the impact point
   for (let i = 0; i < T.MAXP; i++) { const p = parts[i]; if (!p.a || (p.k !== 1 && p.k !== 2 && p.k !== 5)) continue; const f = p.l / p.m;
@@ -641,12 +681,49 @@ function drawGlass(alpha) {
     const L = E.layers[i], ing = T.ING[L.type], y = GY - L.target * H, x = gx + g.hw(L.target) * GS + 12, act = i === E.ci && E.phase === 'pour';
     ctx.fillStyle = ing.col; ctx.strokeStyle = ing.dark; ctx.lineWidth = act ? 2.5 : 1.5;
     ctx.beginPath(); ctx.arc(x + 6, y, act ? 8 : 6, 0, 7); ctx.fill(); ctx.stroke();
-    if (L.res) { ctx.font = font(13, 900); ctx.textAlign = 'left'; ctx.fillStyle = L.res.miss ? '#d4607a' : '#5f843b'; ctx.fillText(L.res.miss ? '✕' : '✓', x + 17, y + 5); }
+    if (L.res && L.shown !== undefined) drawMmLabel(L.res, x + 19, y, G.t - L.shown); // the mm label replaces the ✓/✕
+    else if (L.res) { ctx.font = font(13, 900); ctx.textAlign = 'left'; ctx.fillStyle = L.res.miss ? '#d4607a' : '#5f843b'; ctx.fillText(L.res.miss ? '✕' : '✓', x + 17, y + 5); }
     else if (act) { ctx.font = font(11, 800); ctx.textAlign = 'left'; ctx.fillStyle = ing.dark; ctx.fillText(ing.name, x + 18, y + 4); }
   }
   // perfect shine
   if (E.done && E.done.perfect && E.phase === 'judge') { const f = clamp(E.judgeT / 0.6, 0, 1); ctx.save(); glassPath(gx, g, 0); ctx.clip(); ctx.globalAlpha = 0.5 * Math.sin(f * Math.PI); ctx.fillStyle = '#fff'; ctx.beginPath(); const sx = gx - 120 + f * 260; ctx.moveTo(sx, GY - H - 20); ctx.lineTo(sx + 30, GY - H - 20); ctx.lineTo(sx - 30, GY + 20); ctx.lineTo(sx - 60, GY + 20); ctx.fill(); ctx.restore(); ctx.globalAlpha = 1; }
   if (E.failFx > 0 && E.done && E.done.reason !== 'ok') { ctx.globalAlpha = E.failFx * 0.35; glassPath(gx, g, 0); ctx.fillStyle = '#e8909e'; ctx.fill(); ctx.globalAlpha = 1; }
+}
+function mmText(r) { return r.perfect ? 'PERFEKT ' + fmt1(r.mm) + ' mm' : mmSigned(r.mm) + ' mm'; }
+function mmCol(r) { return r.perfect ? '#c99a2e' : r.mm > 0 ? '#d0663a' : '#3f86b0'; } // too much = warm, too little = cool
+function drawMmLabel(r, x, y, t) {
+  const txt = mmText(r), e = clamp(t / 0.18, 0, 1), s = 0.6 + 0.4 * e + (e < 1 ? 0.2 * Math.sin(e * Math.PI) : 0), fl = Math.min(t, 0.5) * 12;
+  ctx.font = font(12.5, 900); const w = ctx.measureText(txt).width, avail = VW - 5 - x;
+  ctx.save(); ctx.globalAlpha = e; ctx.translate(x, y - fl + 6); ctx.scale(s, s); ctx.textAlign = 'left'; ctx.textBaseline = 'middle'; ctx.lineJoin = 'round';
+  ctx.lineWidth = 3.4; ctx.strokeStyle = 'rgba(255,253,246,0.95)'; ctx.fillStyle = mmCol(r);
+  if (w <= avail) { ctx.strokeText(txt, 0, 0); ctx.fillText(txt, 0, 0); }
+  else if (r.perfect) { const v = fmt1(r.mm) + ' mm'; ctx.font = font(9, 900); ctx.lineWidth = 2.6; ctx.strokeText('PERFEKT', 0, -7); ctx.fillText('PERFEKT', 0, -7); // narrow screens: stacked
+    ctx.font = font(12, 900); ctx.lineWidth = 3.2; ctx.strokeText(v, 0, 4); ctx.fillText(v, 0, 4); }
+  else { const f = Math.max(0.75, avail / w); ctx.scale(f, f); ctx.strokeText(txt, 0, 0); ctx.fillText(txt, 0, 0); }
+  ctx.restore(); ctx.textBaseline = 'alphabetic'; ctx.globalAlpha = 1;
+}
+// glass result card (below the counter): per-layer mm, time, TEMPO/BLITZ bonus
+function drawCard() {
+  const c = E.card; if (!c || G.hud.resultCard === false || (E.phase !== 'judge' && E.phase !== 'out')) return;
+  const a = clamp(c.t / 0.2, 0, 1) * (E.phase === 'out' ? 1 - clamp(E.t / T.SLIDE_OUT, 0, 1) : 1); if (a <= 0) return;
+  const pw = Math.min(VW - 24, 340), y = GY + 22 + (1 - a) * 10, h = c.speedBonus > 0 ? 64 : 46, x = CX - pw / 2;
+  ctx.globalAlpha = a; ctx.fillStyle = 'rgba(255,253,246,0.94)'; ctx.strokeStyle = 'rgba(140,165,120,0.5)'; ctx.lineWidth = 1.5; ctx.beginPath(); rr(x, y, pw, h, 14); ctx.fill(); ctx.stroke();
+  // line 1: layers compactly, coloured by direction
+  const parts = c.items.map(it => [it.name + ' ', (it.perfect ? fmt1(it.mm) : mmSigned(it.mm)), it]);
+  let fs = 12.5; ctx.font = font(fs, 800);
+  const meas = () => { let w = 0; parts.forEach((p, i) => { ctx.font = font(fs, 700); w += ctx.measureText(p[0]).width; ctx.font = font(fs, 900); w += ctx.measureText(p[1]).width; if (i < parts.length - 1) { ctx.font = font(fs, 700); w += ctx.measureText(' · ').width; } }); ctx.font = font(fs, 700); return w + ctx.measureText(' mm').width; };
+  let tw = meas(); if (tw > pw - 20) { fs *= (pw - 20) / tw; tw = meas(); }
+  let cx = CX - tw / 2; const ly = y + 18; ctx.textAlign = 'left';
+  parts.forEach((p, i) => { ctx.font = font(fs, 700); ctx.fillStyle = '#5c6e48'; ctx.fillText(p[0], cx, ly + 4); cx += ctx.measureText(p[0]).width;
+    ctx.font = font(fs, 900); ctx.fillStyle = p[2].miss ? '#d4607a' : mmCol(p[2]); ctx.fillText(p[1], cx, ly + 4); cx += ctx.measureText(p[1]).width;
+    ctx.font = font(fs, 700); ctx.fillStyle = '#9aa58a'; if (i < parts.length - 1) { ctx.fillText(' · ', cx, ly + 4); cx += ctx.measureText(' · ').width; } });
+  ctx.fillStyle = '#5c6e48'; ctx.fillText(' mm', cx, ly + 4);
+  // line 2: time (+ why there is no bonus); line 3: TEMPO / BLITZ
+  ctx.font = font(12, 700); ctx.textAlign = 'center'; ctx.fillStyle = 'rgba(92,110,72,0.8)';
+  const tS = 'Zeit ' + fmt1(c.timeMs / 1000) + ' s', why = c.failed ? '' : c.speedBonus > 0 ? '' : !c.clean ? '  ·  Tempo nur bei sauberen Schichten' : '';
+  ctx.fillText(tS + why, CX, y + 38);
+  if (c.speedBonus > 0) { const p = 1 + (c.t < 0.5 ? 0.12 * Math.sin(c.t / 0.5 * Math.PI) : 0); ctx.save(); ctx.translate(CX, y + 52); ctx.scale(p, p); textOut((c.blitz ? 'BLITZ!  TEMPO +' : 'TEMPO +') + c.speedBonus, 0, 0, 16, c.blitz ? '#c99a2e' : '#4f8f6a', 900); ctx.restore(); }
+  ctx.globalAlpha = 1;
 }
 function drawTargets(gx, g, H) {
   for (let i = 0; i < E.layers.length; i++) {
@@ -710,7 +787,10 @@ function drawMute() {
 function drawCup(x, y, s, on) { ctx.globalAlpha = on ? 1 : 0.25; ctx.fillStyle = on ? '#8aac5c' : '#b9b09a'; ctx.beginPath(); ctx.moveTo(x - 7 * s, y - 8 * s); ctx.lineTo(x + 7 * s, y - 8 * s); ctx.lineTo(x + 5 * s, y + 8 * s); ctx.lineTo(x - 5 * s, y + 8 * s); ctx.closePath(); ctx.fill(); ctx.fillStyle = '#fbf7ee'; ctx.fillRect(x - 6.2 * s, y - 7 * s, 12.4 * s, 5 * s); ctx.globalAlpha = 1; }
 function drawHud() {
   const h = G.hud;
-  if (h.best !== undefined) { ctx.font = font(13, 800); ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(92,122,69,0.75)'; ctx.fillText('BEST ' + h.best, 16, safeTop + 30); }
+  if (h.best !== undefined) { ctx.font = font(13, 800); ctx.textAlign = 'left'; ctx.fillStyle = 'rgba(92,122,69,0.75)'; ctx.fillText('BEST ' + h.best, 16, safeTop + 30);
+    if (h.best > 0 && h.score !== undefined && h.recordHint !== false) { ctx.font = font(11, 800);
+      if (h.score <= h.best) { ctx.fillStyle = 'rgba(185,138,37,0.85)'; ctx.fillText('noch ' + (h.best - h.score + 1) + ' bis Rekord', 16, safeTop + 46); }
+      else { ctx.fillStyle = '#c99a2e'; ctx.globalAlpha = 0.8 + 0.2 * Math.sin(G.t * 6); ctx.fillText('NEUER REKORD!', 16, safeTop + 46); ctx.globalAlpha = 1; } } }
   if (h.score !== undefined) { const sp = 1 + (G.scorePop || 0) * 0.15; ctx.save(); ctx.translate(CX, safeTop + 46); ctx.scale(sp, sp); textOut(String(h.score), 0, 0, 44, '#3f5a2c'); ctx.restore(); }
   if (h.lives !== undefined) for (let i = 0; i < T.LIVES; i++) drawCup(CX - 20 + i * 20, safeTop + 82, 0.8, i < h.lives);
   if (h.sub) { ctx.fillStyle = 'rgba(217,164,65,0.18)'; ctx.beginPath(); rr(CX - 80, safeTop + 96, 160, 22, 11); ctx.fill(); ctx.font = font(12, 900); ctx.textAlign = 'center'; ctx.fillStyle = '#b98a25'; ctx.fillText(h.sub, CX, safeTop + 111); }
@@ -737,6 +817,7 @@ function drawHud() {
     else if (!E.pouring && !L.locked) hint = E.ci === 0 && G.seen.n1 === undefined ? 'Halten = gießen · Loslassen = Schicht fertig' : L.type === 'matcha' && E.ci > 0 ? 'Matcha läuft nach – früher loslassen!' : L.type === 'foam' ? 'Cold Foam steigt nach!' : L.type === 'strawberry' ? 'Erdbeere fließt langsam' : 'Ein Halten pro Schicht';
     else if (E.pouring) hint = lv > L.target - E.band * 1.4 ? 'Jetzt loslassen!' : 'Halten…';
   }
+  drawCard();
   if (hint) { ctx.globalAlpha = 0.8 + 0.2 * Math.sin(G.t * 6); textOut(hint, CX, GY + 52, 17, '#3f5a2c', 800); ctx.globalAlpha = 1;
     if (E.hintsOn && !E.pouring && E.layers.length && curLayer() && !curLayer().locked && E.phase === 'pour') drawHand(CX + 150, GY - 30 + Math.sin(G.t * 5) * 4, 0.5 + 0.5 * Math.sin(G.t * 5)); }
   drawMute();
@@ -756,6 +837,8 @@ function button(b, x, y, w, h, label, primary, disabled) {
   if (primary) { ctx.fillStyle = 'rgba(255,255,255,0.18)'; ctx.beginPath(); rr(x + 6, y + 4, w - 12, h * 0.38, h * 0.2); ctx.fill(); }
   ctx.font = font(primary ? 21 : 16, 900); ctx.textAlign = 'center'; ctx.fillStyle = disabled ? 'rgba(120,120,100,0.7)' : (primary ? '#fffdf6' : '#3f5a2c'); ctx.fillText(label, x + w / 2, y + h / 2 + (primary ? 7 : 6));
 }
+function menuBottom() { return safeTop + Math.max(66, VH * 0.088) + 206; } // bottom of the Rush Hour button
+function menuScale() { let maxH = 0; for (const k in T.GLASS) maxH = Math.max(maxH, T.GLASS[k].H); const need = (maxH + 92) * GS, room = GY - menuBottom() - 10; return clamp(room / need, 0.6, 1); }
 function drawMenu() {
   const t = G.menuT, ty = safeTop + Math.max(66, VH * 0.088);
   ctx.fillStyle = 'rgba(251,245,232,0.55)'; ctx.fillRect(0, 0, VW, ty + 210);
@@ -795,6 +878,7 @@ function render(alpha) {
   ctx.drawImage(bg, 0, 0);
   const k = dpr * scale, sh = G.shake, sx = sh ? rnd(-sh, sh) : 0, sy = sh ? rnd(-sh, sh) * 0.5 : 0;
   ctx.setTransform(k, 0, 0, k, sx * k, sy * k);
+  if (G.state === 'menu' && E.glass) { const ms = menuScale(); if (ms < 1) { ctx.translate(CX, GY); ctx.scale(ms, ms); ctx.translate(-CX, -GY); } }
   drawJug(alpha); drawGlass(alpha); drawOuterFx();
   if (G.flash > 0) { ctx.globalAlpha = G.flash * 0.3; ctx.fillStyle = '#fff6d8'; ctx.fillRect(-20, -20, VW + 40, VH + 40); ctx.globalAlpha = 1; }
   ctx.setTransform(k, 0, 0, k, 0, 0);
@@ -816,6 +900,6 @@ resize(); setMode('menu');
 requestAnimationFrame(t => { last = t; requestAnimationFrame(frame); });
 
 // test / debug hook
-window.__omm = { G, E, T, BUILD, step, render, sfx, parts, BTN, scale: () => scale, API, genRecipe, volToH, hToVol, surfH, cumVol, Endless,
+window.__omm = { G, E, T, BUILD, step, render, sfx, mmText, fmt1, mmSigned, menuScale, menuBottom, jugGeo, parts, BTN, scale: () => scale, API, genRecipe, volToH, hToVol, surfH, cumVol, Endless,
   q: () => ({ dpr, qDpr, lowFx, VW, VH, GY, GS, pAlive }), hold(v) { G.hold = !!v; if (!v) E.needRelease = false; } };
 })();

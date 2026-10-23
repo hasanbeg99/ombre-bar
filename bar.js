@@ -4,7 +4,7 @@
    Kein Echtgeld, keine Lootboxen, keine Zufallskäufe: Trinkgeld ist eine reine Spielwährung für Kosmetik. */
 (function () {
   'use strict';
-  const VERSION = '1.1.0';
+  const VERSION = '1.2.0';
   const MODE_ID = 'rush';
   const SAVE_KEY = 'ombre.rush.v1';
 
@@ -22,6 +22,7 @@
     happyQ: 0.62, neutralQ: 0.36, // ≈ Core „GUT“ → glücklich, „KNAPP“ → neutral
     streakStep: 0.2, streakCap: 3.0,   // Trinkgeld-Multiplikator: +0.2 je Serie, max x3
     perfectBonus: 8, regularMul: 1.5,
+    tempoTip: 1, blitzTip: 2,  // Extra-Trinkgeld, wenn der Core einen Tempo-/Blitz-Bonus meldet (nur bei glücklichem Gast)
     neutralTipMul: 0.4,
     gapAfterServe: 0.35,     // s Pause bis zum nächsten startGlass (Core animiert Glaswechsel ~0.9 s selbst)
     diffStart: 0.05, diffEnd: 0.45, // recipe.diff an den Core: Strahl wird über die Schicht schneller, Band enger
@@ -220,7 +221,7 @@
     const seed = kind === 'daily' ? dailySeed(dk) : ((Date.now() ^ (Math.random() * 1e9)) >>> 0);
     S = {
       kind, dateKey: dk, seed, runId: seed.toString(36) + Date.now().toString(36).slice(-3), rng: seededRng(seed), regRng: mulberry32(seed ^ 0x9e3779b9),
-      t: 0, phase: 'play', tips: 0, streak: 0, bestStreak: 0, served: 0, perfects: 0, happy: 0, lost: 0, customers: 0,
+      t: 0, phase: 'play', bestMm: null, tips: 0, streak: 0, bestStreak: 0, served: 0, perfects: 0, happy: 0, lost: 0, customers: 0,
       queue: [], leaving: [], nextArrival: 0, pending: null, gap: 0.4, endT: 0, parts: [], pops: [], banner: null, regSeen: new Set(), log: [],
       bannerShown: {},
     };
@@ -260,6 +261,9 @@
     const ev = evaluate(res);
     const r = computeTip(c, ev, S.streak);
     S.streak = r.streak; S.bestStreak = Math.max(S.bestStreak, S.streak);
+    // v1.2 core fields (optional): mm per layer → best hit of the shift; speedBonus → small extra tip for a fast clean glass
+    if (!res.failed && Array.isArray(res.layers)) for (const l of res.layers) if (typeof l.mm === 'number') { const a = Math.abs(l.mm); if (S.bestMm == null || a < S.bestMm) S.bestMm = a; }
+    if (r.mood === 'happy' && (res.speedBonus | 0) > 0) r.tip += res.blitz ? CFG.blitzTip : CFG.tempoTip;
     S.tips += r.tip; S.served++;
     if (ev.perfect) S.perfects++;
     if (r.mood === 'happy') S.happy++;
@@ -269,7 +273,7 @@
     if (c.reg && r.mood === 'happy') { const rs = regState(c.reg); rs.hearts = Math.min(5, rs.hearts + 1); if (rs.hearts >= 5) grantGift(c.reg); }
     const px = c.x, py = c.y - 70 * c.scale;
     const label = res.overflow ? 'Übergelaufen!' : res.timeout ? 'Zu spät!' : ev.perfect ? 'Perfekt!' : r.mood === 'happy' ? 'Lecker!' : r.mood === 'neutral' ? (c.late ? 'Endlich …' : 'Geht so …') : 'Hmpf.';
-    S.pops.push({ x: px, y: py, text: label, sub: r.tip > 0 ? '+' + r.tip : '', col: r.mood === 'happy' ? '#3f7a2c' : r.mood === 'neutral' ? '#9a7a2a' : '#b5523f', t: 0 });
+    S.pops.push({ x: px, y: py, text: label, sub: r.tip > 0 ? '+' + r.tip + ((res.speedBonus | 0) > 0 && r.mood === 'happy' ? (res.blitz ? ' · Blitz!' : ' · Tempo') : '') : '', col: r.mood === 'happy' ? '#3f7a2c' : r.mood === 'neutral' ? '#9a7a2a' : '#b5523f', t: 0 });
     if (r.mood === 'happy') burst(px, py + 20, ev.perfect ? 16 : 9, ev.perfect ? 'star' : 'heart');
     else if (r.mood === 'annoyed') burst(px, py + 10, 5, 'puff');
     if (S.streak >= 2 && r.mood === 'happy') S.pops.push({ x: W * 0.5, y: bandY(0.17) + 30 * U, text: 'Serie ' + S.streak + '  ×' + streakMul(S.streak).toFixed(1), col: '#c46a2b', t: 0, big: true });
@@ -313,7 +317,7 @@
     } else if (S.tips > SAVE.bestShift) { SAVE.bestShift = S.tips; newBest = true; }
     checkUnlocks();
     save();
-    lastResult = { kind: S.kind, dateKey: S.dateKey, tips: S.tips, served: S.served, perfects: S.perfects, happy: S.happy, lost: S.lost, bestStreak: S.bestStreak, newBest, customers: S.customers, seed: S.seed };
+    lastResult = { bestMm: S.bestMm, kind: S.kind, dateKey: S.dateKey, tips: S.tips, served: S.served, perfects: S.perfects, happy: S.happy, lost: S.lost, bestStreak: S.bestStreak, newBest, customers: S.customers, seed: S.seed };
     setBanner('Feierabend!', S.tips + ' Trinkgeld verdient');
     sfx('bell');
     const O = OMM(); if (O && O.setHUD) { try { O.setHUD(CFG.ownHUD ? { title: 'Rush Hour', order: false } : { title: 'Rush Hour', score: S.tips, sub: 'Feierabend!' }); } catch (e) { } }
@@ -779,6 +783,7 @@
     txt('Trinkgeld', W / 2, cy + 36 * U, 12 * U, '#8a7b62', 600);
     if (R.newBest) { ctx.fillStyle = '#f6b25a'; rr(W / 2 - 62 * U, cy + 50 * U, 124 * U, 24 * U, 12 * U); ctx.fill(); txt('Neuer Bestwert!', W / 2, cy + 62 * U, 12 * U, '#fff', 800); }
     const rows = [['Gäste bedient', R.served], ['Glücklich', R.happy], ['Perfekt', R.perfects], ['Beste Serie', R.bestStreak], ['Gegangen', R.lost]];
+    if (R.bestMm != null) rows.splice(3, 0, ['Bester Treffer', R.bestMm.toFixed(1).replace('.', ',') + ' mm']);
     let y = cy + 96 * U;
     ctx.fillStyle = 'rgba(255,253,248,0.95)'; rr(32 * U, y - 14 * U, W - 64 * U, rows.length * 26 * U + 10 * U, 14 * U); ctx.fill();
     rows.forEach(([k, v], i) => { txt(k, 50 * U, y + i * 26 * U + 4 * U, 13 * U, '#5b6650', 600, 'left'); txt(String(v), W - 50 * U, y + i * 26 * U + 4 * U, 14 * U, '#3d4a33', 800, 'right'); });

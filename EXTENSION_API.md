@@ -43,7 +43,8 @@ window.OMM = {
   perfect: bool,              // all layers PERFEKT
   overflow: bool,
   failed: bool,               // overflow OR any layer missed badly (|error| > T.missTol)
-  layers: [ { type, target, actual, error /* actual-target, signed */, sharpness /* 0..1, 1 = crisp */ } ]
+  layers: [ { type, target, actual, error /* actual-target, signed */, sharpness /* 0..1, 1 = crisp */, mm /* v1.2, optional: error in virtual mm, signed */ } ],
+  timeMs, parMs, speedBonus, blitz   // v1.2, optional – see below
 }
 ```
 
@@ -75,3 +76,26 @@ Pass `null` for a field to restore the default. `setHUD(null)` resets all.
 - `OMM.reserveTop(px)` – an overlay covering the top of the screen reserves that height (CSS px); core verdict pops
   ('PERFEKTES GLAS!', 'ÜBERGELAUFEN!', …) are placed below it. Reset to 0 on every `setMode`.
 - Rush Hour (`bar.js`, mode id `'rush'`) ships with the core and uses both.
+
+## v1.2 additions (all optional / backwards compatible)
+Result object (`onGlassDone`):
+- `layers[i].mm` – signed miss in millimetres of a virtual glass: `error × OMM.T.GLASS[glass].mm`
+  (tall 150 mm, short 100 mm, cup 90 mm), rounded to 0.1. `+` = too much, `−` = too little.
+- `timeMs` – time from "glass ready" (end of slide-in) to "last layer locked" (release of the last hold).
+  For failed glasses: time until the failure.
+- `parMs` – par time of this recipe: `PAR_START + Σ(ideal uninterrupted hold time of the layer + PAR_GAP)`.
+- `speedBonus` – extra points, **not** included in `score`. `round(SPEED_CAP · score · share)`,
+  `share = clamp((par − t) / (par · SPEED_SPAN), 0, 1)`. Only when the glass succeeded (no miss/overflow/timeout)
+  **and** every boundary is at least SAUBER (`sharpness ≥ SHARP_OK`). Capped at 25 % of `score`.
+- `blitz` – `true` if `share ≥ BLITZ` (shown as "BLITZ!").
+- Endless adds `speedBonus` after the streak multiplier; it never affects `perfect` or the streak.
+  Rush Hour gives +1 tip (TEMPO) / +2 (BLITZ) to a happy guest and shows "Bester Treffer" (best mm) in the shift result.
+
+Speed vs. clean: starting the next layer while the previous one is still settling churns the boundary:
+`mix += RUSH_MIX · clamp(1 − sinceLock / SETTLE_T, 0, 1)` (0.2 / 0.55 s). The ramp mix (`MIX_K`, now 1.0) stays, so a
+very long hold still blurs a bit. Waiting ≈ 0.5 s between layers keeps boundaries SAUBER; rushing loses the bonus.
+
+Core UI (no API needed): mm label at each target line after the verdict ('+2,4 mm' warm / '−1,1 mm' cool /
+'PERFEKT 0,3 mm'), a result card below the counter (per layer mm, 'Zeit 4,2 s', 'TEMPO +N' / 'BLITZ! TEMPO +N').
+Hide the card with `setHUD({ resultCard: false })`; hide the record line with `setHUD({ recordHint: false })`.
+The HUD shows 'noch X bis Rekord' whenever `best > 0` and `score` is set.

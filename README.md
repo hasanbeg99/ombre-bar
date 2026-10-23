@@ -10,7 +10,12 @@ Matcha läuft nach und sinkt als grüne Wolke in die Milch, Cold Foam steigt nac
   Perfektes Glas (alle Schichten PERFEKT + saubere Grenzen) = Serien-Multiplikator bis ×5.
 - Modus **Rush Hour** (`bar.js`): Kundenmodus mit 60-s-Schichten, Trinkgeld, Stammgästen und Tages-Challenge – eingesteckt über `EXTENSION_API.md` (`window.OMM`), Design: `RUSH_HOUR_DESIGN.md`.
 - Alle Spielwerte stehen im Objekt `T` oben in `game.js` (inkl. `T.TITLE`, Zutaten `T.ING`, Glasformen `T.GLASS`).
-- Build-Marker: `OMM_BUILD v1.1.0 2026-10-23`. Tests: `/workspace/pwtest/omm_test.js`.
+- Build-Marker: `OMM_BUILD v1.2.0 2026-10-23`. Tests: `/workspace/pwtest/omm_test.js`.
 - Kleines Detail: „O.T.“-Gravur auf dem Glas und „inspiriert von O.T.“ auf dem Startbildschirm.
 
 © 2026 Oruci Sabahudin. Code, Grafik und Sound prozedural/original.
+
+## v1.2
+- Millimetre display: every layer shows its miss in mm ('+2,4 mm', '−1,1 mm', 'PERFEKT 0,3 mm'); result card per glass; game over shows 'Bester Treffer'.
+- Speed bonus ('TEMPO +N', 'BLITZ!') for quick AND clean glasses; rushing the next layer blurs the boundary.
+- Lock click + glow, 'noch X bis Rekord', first 3 Endless glasses protected (no timer, no life loss), glass 1 calm.

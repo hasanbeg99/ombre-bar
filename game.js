@@ -33,11 +33,11 @@ const T = {
   // ingredients: flow = stream multiplier, tail = after-flow (s of current stream) arriving over tailT,
   // rise = share of the poured volume that expands afterwards over riseT (foam), cloud = sinking cloud fx
   ING: {
-    milk:       { name: 'Milch',     col: '#fbf7ee', dark: '#d9cfba', flow: 1.00, tail: 0.015, tailT: 0.12, rise: 0,    riseT: 1,   cloud: 0 },
+    milk:       { name: 'Milch',     col: '#fbf7ee', dark: '#b3a584', flow: 1.00, tail: 0.015, tailT: 0.12, rise: 0,    riseT: 1,   cloud: 0 },
     matcha:     { name: 'Matcha',    col: '#8aac5c', dark: '#5f843b', flow: 0.95, tail: 0.10,  tailT: 0.45, rise: 0,    riseT: 1,   cloud: 1 },
     strawberry: { name: 'Erdbeere',  col: '#e98c9c', dark: '#c9607a', flow: 0.72, tail: 0.06,  tailT: 0.60, rise: 0,    riseT: 1,   cloud: 0 },
-    coconut:    { name: 'Kokos',     col: '#efe7d6', dark: '#c8b994', flow: 1.05, tail: 0.035, tailT: 0.20, rise: 0,    riseT: 1,   cloud: 0 },
-    foam:       { name: 'Cold Foam', col: '#fffdf7', dark: '#cfc6b2', flow: 0.85, tail: 0.01,  tailT: 0.10, rise: 0.24, riseT: 0.9, cloud: 0 },
+    coconut:    { name: 'Kokos',     col: '#efe7d6', dark: '#a8956a', flow: 1.05, tail: 0.035, tailT: 0.20, rise: 0,    riseT: 1,   cloud: 0 },
+    foam:       { name: 'Cold Foam', col: '#fffdf7', dark: '#ada38c', flow: 0.85, tail: 0.01,  tailT: 0.10, rise: 0.24, riseT: 0.9, cloud: 0 },
   },
   // glass shapes: H = inner height (px), hw(h) = inner half width at height fraction h
   GLASS: {
